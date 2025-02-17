@@ -5,20 +5,23 @@ import (
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
 
-func init() {
-	handle.RegisterMaker(RemoteHandle{}.RedirectType(), NewRemoteHandle)
-}
-
 type RemoteHandle struct{}
+
+func NewRemoteHandle() (handle.RedirectHandle, error) {
+	return nil, protos.ErrNotImpl
+}
 
 func (RemoteHandle) RedirectType() protos.RedirectType {
 	return protos.RedirectType_Remote
 }
 
-func (h *RemoteHandle) HandleReqData([]byte) ([]byte, error) {
-	return nil, handle.ErrNotImpl
+func (h *RemoteHandle) Close() error {
+	return nil
 }
 
-func NewRemoteHandle() (handle.RedirectHandle, error) {
-	return nil, handle.ErrNotImpl
+func (h *RemoteHandle) HandleReqData([]byte) ([]byte, error) {
+	return nil, protos.ErrNotImpl
+}
+
+func (h *RemoteHandle) HandlePacketData(data []byte) {
 }

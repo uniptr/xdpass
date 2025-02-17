@@ -5,20 +5,23 @@ import (
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
 
-func init() {
-	handle.RegisterMaker(DumpHandle{}.RedirectType(), NewDumpHandle)
-}
-
 type DumpHandle struct{}
 
 func NewDumpHandle() (handle.RedirectHandle, error) {
-	return &DumpHandle{}, nil
+	return nil, protos.ErrNotImpl
 }
 
 func (DumpHandle) RedirectType() protos.RedirectType {
 	return protos.RedirectType_Dump
 }
 
+func (h *DumpHandle) Close() error {
+	return nil
+}
+
 func (h *DumpHandle) HandleReqData([]byte) ([]byte, error) {
-	return nil, handle.ErrNotImpl
+	return nil, protos.ErrNotImpl
+}
+
+func (h *DumpHandle) HandlePacketData(data []byte) {
 }

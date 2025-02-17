@@ -2,6 +2,8 @@ package redirect
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/pkg/errors"
@@ -11,6 +13,7 @@ import (
 	"github.com/zxhio/xdpass/internal/firewall"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
+	"github.com/zxhio/xdpass/internal/redirect/spoof"
 	"github.com/zxhio/xdpass/internal/stats"
 	"github.com/zxhio/xdpass/internal/xdpflags"
 	"github.com/zxhio/xdpass/pkg/utils"
@@ -46,6 +49,7 @@ type Redirect struct {
 	*xdpprog.Objects
 	filter  *firewall.Filter
 	server  *cmdconn.TLVServer
+	handles map[protos.RedirectType]handle.RedirectHandle
 	closers utils.NamedClosers
 }
 
@@ -129,9 +133,38 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 	}
 	closers = append(closers, utils.NamedCloser{Name: "cmdconn.Server", Close: server.Close})
 
+	err = r.setHandles()
+	if err != nil {
+		closers.Close(nil)
+		return nil, err
+	}
+
 	r.server = server
 	r.closers = closers
 	return &r, nil
+}
+
+func (r *Redirect) setHandles() error {
+	r.handles = map[protos.RedirectType]handle.RedirectHandle{}
+
+	// Dump
+	// TODO: implement
+
+	// Remote
+	// TODO: implement
+
+	// Spoof handle
+	spoofHandle, err := spoof.NewSpoofHandle()
+	if err != nil {
+		return err
+	}
+	r.handles[spoofHandle.RedirectType()] = spoofHandle
+	r.closers = append(r.closers, utils.NamedCloser{Name: "spoof.SpoofHandle", Close: spoofHandle.Close})
+
+	// Tap
+	// TODO: implement
+
+	return nil
 }
 
 func (r *Redirect) Run(ctx context.Context) error {
@@ -204,7 +237,17 @@ func (*Redirect) CommandType() protos.Type {
 }
 
 func (r *Redirect) HandleReqData(data []byte) ([]byte, error) {
-	return nil, handle.ErrNotImpl
+	var req protos.RedirectReq
+	err := json.Unmarshal(data, &req)
+	if err != nil {
+		return nil, err
+	}
+
+	handle, ok := r.handles[req.RedirectType]
+	if !ok {
+		return nil, fmt.Errorf("invalid redirect type: %s", req.RedirectType)
+	}
+	return handle.HandleReqData(req.RedirectData)
 }
 
 func stuffFillQ(x *xdp.XDPSocket) {

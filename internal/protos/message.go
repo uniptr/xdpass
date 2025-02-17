@@ -21,14 +21,14 @@ const (
 	TypeStr_Stats     = "stats"
 )
 
-var TypeLookup = map[string]Type{
+var typeLookup = map[string]Type{
 	TypeStr_Redirect:  Type_Redirect,
 	TypeStr_Filter:    Type_Filter,
 	TypeStr_Interface: Type_Interface,
 	TypeStr_Stats:     Type_Stats,
 }
 
-var TypeStrLookup = map[Type]string{
+var typeStrLookup = map[Type]string{
 	Type_Redirect:  TypeStr_Redirect,
 	Type_Filter:    TypeStr_Filter,
 	Type_Interface: TypeStr_Interface,
@@ -36,18 +36,18 @@ var TypeStrLookup = map[Type]string{
 }
 
 func (t Type) String() string {
-	return TypeStrLookup[t]
+	return typeStrLookup[t]
 }
 
 func (t *Type) Set(s string) error {
-	*t = TypeLookup[s]
+	*t = typeLookup[s]
 	return nil
 }
 
 func (t Type) MarshalJSON() ([]byte, error) {
-	s, ok := TypeStrLookup[t]
+	s, ok := typeStrLookup[t]
 	if !ok {
-		return nil, fmt.Errorf("invalid type %d", t)
+		return nil, fmt.Errorf("invalid type: %d", t)
 	}
 	return json.Marshal(s)
 }
@@ -59,20 +59,24 @@ func (t *Type) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	v, ok := TypeLookup[s]
+	v, ok := typeLookup[s]
 	if !ok {
-		return fmt.Errorf("invalid type string")
+		return fmt.Errorf("invalid type: %s", s)
 	}
 	*t = v
 	return nil
 }
 
 type MessageReq struct {
-	Type Type   `json:"type"`
-	Data string `json:"data,omitempty"`
+	Type Type            `json:"type"`
+	ID   string          `json:"id,omitempty"`
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 type MessageResp struct {
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"` // TODO: add error_code
+	Status    int             `json:"status"`
+	ID        string          `json:"id,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	ErrorCode ErrorCode       `json:"error_code,omitempty"`
 }

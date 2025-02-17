@@ -107,9 +107,10 @@ func (s *TLVServer) handleReqData(data []byte) ([]byte, error) {
 		err = errors.New("unsupported command")
 	}
 
-	resp := protos.MessageResp{Data: string(data)}
+	resp := protos.MessageResp{Data: data}
 	if err != nil {
-		resp.Error = err.Error()
+		resp.Message = err.Error()
+		resp.ErrorCode = 1
 	}
 	return json.Marshal(resp)
 }

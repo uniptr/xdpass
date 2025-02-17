@@ -1,5 +1,10 @@
 package protos
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 type RedirectType int
 
 const (
@@ -16,14 +21,14 @@ const (
 	RedirectTypeStr_Tap    = "tap"
 )
 
-var RedirectTypeStrLookup = map[RedirectType]string{
+var redirectTypeStrLookup = map[RedirectType]string{
 	RedirectType_Dump:   RedirectTypeStr_Dump,
 	RedirectType_Remote: RedirectTypeStr_Remote,
 	RedirectType_Spoof:  RedirectTypeStr_Spoof,
 	RedirectType_Tap:    RedirectTypeStr_Tap,
 }
 
-var RedirectTypeLookup = map[string]RedirectType{
+var redirectTypeLookup = map[string]RedirectType{
 	RedirectTypeStr_Dump:   RedirectType_Dump,
 	RedirectTypeStr_Remote: RedirectType_Remote,
 	RedirectTypeStr_Spoof:  RedirectType_Spoof,
@@ -31,18 +36,121 @@ var RedirectTypeLookup = map[string]RedirectType{
 }
 
 func (t RedirectType) String() string {
-	return RedirectTypeStrLookup[t]
+	return redirectTypeStrLookup[t]
 }
 
-func (t *RedirectType) Set(s string) error {
-	*t = RedirectTypeLookup[s]
+func (t RedirectType) MarshalJSON() ([]byte, error) {
+	s, ok := redirectTypeStrLookup[t]
+	if !ok {
+		return nil, fmt.Errorf("invalid redirect type %d", t)
+	}
+	return json.Marshal(s)
+}
+
+func (t *RedirectType) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+
+	v, ok := redirectTypeLookup[s]
+	if !ok {
+		return fmt.Errorf("invalid redirect type string")
+	}
+	*t = v
 	return nil
 }
 
-func (t RedirectType) Type() string {
-	return "RedirectType"
+type RedirectReq struct {
+	RedirectType RedirectType    `json:"redirect_type"`
+	RedirectData json.RawMessage `json:"redirect_data"`
 }
 
-type RedirectDump struct {
-	Data string `json:"data"`
+// Dump
+// TODO: add req/resp
+
+// Remote
+// TODO: add req/resp
+
+// Spoof
+
+type SpoofType int
+
+const (
+	SpoofType_None SpoofType = iota
+	SpoofType_ICMPEchoReply
+)
+
+const (
+	SpoofTypeStr_None          = "none"
+	SpoofTypeStr_ICMPEchoReply = "icmp-echo-reply"
+)
+
+var spoofTypeLookup = map[string]SpoofType{
+	SpoofTypeStr_None:          SpoofType_None,
+	SpoofTypeStr_ICMPEchoReply: SpoofType_ICMPEchoReply,
+}
+
+var spoofTypeStrLookup = map[SpoofType]string{
+	SpoofType_None:          SpoofTypeStr_None,
+	SpoofType_ICMPEchoReply: SpoofTypeStr_ICMPEchoReply,
+}
+
+func (t SpoofType) String() string { return spoofTypeStrLookup[t] }
+
+func (t *SpoofType) Set(s string) error {
+	v, ok := spoofTypeLookup[s]
+	if !ok {
+		return fmt.Errorf("invalid spoof type: %s", s)
+	}
+	*t = v
+	return nil
+}
+
+func (t *SpoofType) Type() string {
+	return "SpoofType"
+}
+
+func (t SpoofType) MarshalJSON() ([]byte, error) {
+	s, ok := spoofTypeStrLookup[t]
+	if !ok {
+		return nil, fmt.Errorf("invalid spoof type: %d", t)
+	}
+	return json.Marshal(s)
+}
+
+func (t *SpoofType) UnmarshalJSON(data []byte) error {
+	var s string
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	return t.Set(s)
+}
+
+type SpoofOperation int
+
+const (
+	SpoofOperation_Nop SpoofOperation = iota
+	SpoofOperation_List
+	SpoofOperation_ListTypes
+	SpoofOperation_Add
+	SpoofOperation_Del
+)
+
+type SpoofRule struct {
+	Interface   string    `json:"interface,omitempty"`
+	SpoofType   SpoofType `json:"spoof_type"`
+	Source      string    `json:"source"`
+	Destination string    `json:"dest"`
+}
+
+type SpoofReq struct {
+	Operation SpoofOperation `json:"operation"`
+	Rules     []SpoofRule    `json:"rules,omitempty"`
+}
+
+type SpoofResp struct {
+	Rules []SpoofRule `json:"rules,omitempty"`
 }

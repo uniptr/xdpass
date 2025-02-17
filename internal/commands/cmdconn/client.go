@@ -26,10 +26,10 @@ func (c *TLVClient) Close() error {
 	return c.conn.Close()
 }
 
-func (c *TLVClient) PostData(typ protos.Type, data []byte) ([]byte, error) {
+func (c *TLVClient) PostData(subcommand protos.Type, data []byte) ([]byte, error) {
 	req := protos.MessageReq{
-		Type: typ,
-		Data: string(data),
+		Type: subcommand,
+		Data: data,
 	}
 	data, err := json.Marshal(&req)
 	if err != nil {
@@ -53,16 +53,36 @@ func (c *TLVClient) PostData(typ protos.Type, data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if resp.Error != "" {
-		return nil, errors.New(resp.Error)
+	if resp.Message != "" {
+		return nil, errors.New(resp.Message)
 	}
 	return []byte(resp.Data), nil
 }
 
-func PostData(typ protos.Type, data []byte) ([]byte, error) {
+func PostData(subcommand protos.Type, data []byte) ([]byte, error) {
 	client, err := NewTLVClient()
 	if err != nil {
 		return nil, err
 	}
-	return client.PostData(typ, data)
+	defer client.Close()
+	return client.PostData(subcommand, data)
+}
+
+func PostRequest[Q, R any](subcommand protos.Type, v *Q) (*R, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err = PostData(subcommand, data)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp R
+	err = json.Unmarshal(data, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

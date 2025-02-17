@@ -30,6 +30,19 @@ func LoadObjects(opts *ebpf.CollectionOptions) (*Objects, error) {
 
 type IPLpmKey xdpprogIpLpmKey
 
+func (key *IPLpmKey) Set(s string) error {
+	k, err := MakeIPLpmKeyFromStr(s)
+	if err != nil {
+		return err
+	}
+	*key = *k
+	return nil
+}
+
+func (key *IPLpmKey) Type() string {
+	return "IPLpmKey"
+}
+
 func (key IPLpmKey) String() string {
 	isIPv4 := true
 	for i := 4; i < len(key.Data); i++ {
@@ -54,13 +67,7 @@ func (key *IPLpmKey) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-
-	k, err := MakeIPLpmKeyFromStr(s)
-	if err != nil {
-		return err
-	}
-	*key = *k
-	return nil
+	return key.Set(s)
 }
 
 func MakeIPLpmKeyFromIP(ip net.IP) *IPLpmKey {

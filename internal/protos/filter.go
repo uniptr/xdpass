@@ -4,18 +4,39 @@ import (
 	"github.com/zxhio/xdpass/pkg/xdpprog"
 )
 
+type FilterOperation int
+
+const (
+	FilterOperation_Nop FilterOperation = iota
+	FilterOperation_List
+	FilterOperation_Add
+	FilterOperation_Del
+)
+
+func (f FilterOperation) String() string {
+	switch f {
+	case FilterOperation_Nop:
+		return "nop"
+	case FilterOperation_List:
+		return "list"
+	case FilterOperation_Add:
+		return "add"
+	case FilterOperation_Del:
+		return "del"
+	}
+	return "unknown"
+}
+
 type FilterReq struct {
-	Interface string             `json:"interface"`
-	AddKeys   []xdpprog.IPLpmKey `json:"add_keys,omitempty"`
-	DelKeys   []xdpprog.IPLpmKey `json:"del_keys,omitempty"`
-	Show      bool               `json:"show,omitempty"`
+	Operation FilterOperation `json:"operation"`
+	Rules     []FilterRule    `json:"rules,omitempty"`
 }
 
 type FilterResp struct {
-	InterfacesKeys []FilterInterfaceKeys `json:"interfaces_keys"`
+	Rules []FilterRule `json:"rules"`
 }
 
-type FilterInterfaceKeys struct {
+type FilterRule struct {
 	Interface string             `json:"interface"`
 	Keys      []xdpprog.IPLpmKey `json:"keys,omitempty"`
 }

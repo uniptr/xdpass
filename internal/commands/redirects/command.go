@@ -1,8 +1,11 @@
 package redirects
 
 import (
+	"encoding/json"
+
 	"github.com/spf13/cobra"
 	"github.com/zxhio/xdpass/internal/commands"
+	"github.com/zxhio/xdpass/internal/commands/cmdconn"
 	"github.com/zxhio/xdpass/internal/protos"
 )
 
@@ -54,24 +57,6 @@ type remoteOpt struct {
 	network string
 }
 
-var spoofCmd = &cobra.Command{
-	Use:   protos.RedirectTypeStr_Spoof,
-	Short: "Traffic spoof based on rules",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return nil
-	},
-}
-
-type spoofOpt struct {
-	show        bool
-	add         bool
-	del         bool
-	showTypes   bool
-	typ         string
-	source      string
-	destination string
-}
-
 var opt struct {
 	ifaceName string
 
@@ -97,19 +82,23 @@ func init() {
 	remoteCmd.Flags().StringVar(&opt.remote.add, "add", "", "Add remote address")
 	remoteCmd.Flags().StringVar(&opt.remote.del, "del", "", "Delete remote address")
 
-	// Spoof
-	commands.SetFlagsList(spoofCmd.Flags(), &opt.spoof.show, "List spoof rules")
-	spoofCmd.Flags().BoolVar(&opt.spoof.add, "add", false, "Add spoof rule")
-	spoofCmd.Flags().BoolVar(&opt.spoof.del, "del", false, "Delete spoof rule")
-	spoofCmd.Flags().StringVarP(&opt.spoof.source, "source", "s", "", "Source address (ip or ip:port)")
-	spoofCmd.Flags().StringVarP(&opt.spoof.destination, "dest", "d", "", "Destination address (ip or ip:port)")
-	spoofCmd.Flags().BoolVar(&opt.spoof.showTypes, "list-type", false, "List supported spoof types")
-	spoofCmd.Flags().StringVarP(&opt.spoof.typ, "type", "t", "", "Type for spoof rule")
-
 	redirectCmd.AddCommand(tapCmd)
 	redirectCmd.AddCommand(dumpCmd)
 	redirectCmd.AddCommand(remoteCmd)
-	redirectCmd.AddCommand(spoofCmd)
 
 	commands.Register(redirectCmd)
+}
+
+func postRequest[Q, R any](redirectType protos.RedirectType, v *Q) (*R, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+
+	req := protos.RedirectReq{RedirectType: redirectType, RedirectData: data}
+	resp, err := cmdconn.PostRequest[protos.RedirectReq, R](protos.Type_Redirect, &req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }

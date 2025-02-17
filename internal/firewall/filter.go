@@ -84,37 +84,45 @@ func (f *Filter) HandleReqData(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	if req.Show {
-		return f.handleCommandShow()
+	if req.Operation == protos.FilterOperation_List {
+		return f.handleOpShowList()
 	}
 
-	for _, key := range req.AddKeys {
-		logrus.WithField("key", key).Info("Add lpm key")
-		err = f.AddIPKey(key)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	for _, key := range req.DelKeys {
-		logrus.WithField("key", key).Info("Del lpm key")
-		err = f.DelIPKey(key)
-		if err != nil {
-			return nil, err
-		}
+	switch req.Operation {
+	case protos.FilterOperation_Nop:
+		return []byte("{}"), nil
+	case protos.FilterOperation_List:
+		return f.handleOpShowList()
+	case protos.FilterOperation_Add:
+		return f.handleOpAddDel(req.Rules, protos.FilterOperation_Add, f.AddIPKey)
+	case protos.FilterOperation_Del:
+		return f.handleOpAddDel(req.Rules, protos.FilterOperation_Del, f.DelIPKey)
 	}
 
 	return nil, nil
 }
 
-func (f *Filter) handleCommandShow() ([]byte, error) {
+func (f *Filter) handleOpShowList() ([]byte, error) {
 	keys, err := f.List()
 	if err != nil {
 		return nil, err
 	}
-	resp := protos.FilterResp{InterfacesKeys: []protos.FilterInterfaceKeys{{
+	resp := protos.FilterResp{Rules: []protos.FilterRule{{
 		Interface: f.ifaceName,
 		Keys:      keys,
 	}}}
 	return json.Marshal(&resp)
+}
+
+func (f *Filter) handleOpAddDel(rules []protos.FilterRule, op protos.FilterOperation, handle func(key xdpprog.IPLpmKey) error) ([]byte, error) {
+	for _, rule := range rules {
+		for _, key := range rule.Keys {
+			logrus.WithFields(logrus.Fields{"key": key, "iface": f.ifaceName, "op": op}).Debug("Operate ip lpm key")
+			err := handle(key)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return []byte("{}"), nil
 }
