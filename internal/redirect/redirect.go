@@ -133,7 +133,7 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 	}
 	closers = append(closers, utils.NamedCloser{Name: "cmdconn.Server", Close: server.Close})
 
-	err = r.setHandles()
+	err = r.setHandles(ifaceName)
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
@@ -144,7 +144,7 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 	return &r, nil
 }
 
-func (r *Redirect) setHandles() error {
+func (r *Redirect) setHandles(ifaceName string) error {
 	r.handles = map[protos.RedirectType]handle.RedirectHandle{}
 
 	// Dump
@@ -154,7 +154,7 @@ func (r *Redirect) setHandles() error {
 	// TODO: implement
 
 	// Spoof handle
-	spoofHandle, err := spoof.NewSpoofHandle()
+	spoofHandle, err := spoof.NewSpoofHandle(ifaceName)
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,9 @@ func (r *Redirect) Run(ctx context.Context) error {
 			stat.Bytes += uint64(desc.Len)
 			stat.Packets++
 
-			// TODO: add handles
+			for _, handle := range r.handles {
+				handle.HandlePacketData(r.Umem.GetData(desc))
+			}
 
 			r.FreeUmemFrame(desc.Addr)
 		}

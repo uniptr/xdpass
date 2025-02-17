@@ -15,8 +15,8 @@ type spoofOpt struct {
 	add         bool
 	del         bool
 	typ         protos.SpoofType
-	source      string
-	destination string
+	source      protos.AddrPort
+	destination protos.AddrPort
 }
 
 var spoofCmd = &cobra.Command{
@@ -32,8 +32,8 @@ func init() {
 	spoofCmd.Flags().BoolVar(&opt.spoof.showTypes, "list-types", false, "Show supported spoof type list")
 	spoofCmd.Flags().BoolVar(&opt.spoof.add, "add", false, "Add spoof rule")
 	spoofCmd.Flags().BoolVar(&opt.spoof.del, "del", false, "Delete spoof rule")
-	spoofCmd.Flags().StringVarP(&opt.spoof.source, "source", "s", "", "Source address (ip or ip:port)")
-	spoofCmd.Flags().StringVarP(&opt.spoof.destination, "dest", "d", "", "Destination address (ip or ip:port)")
+	spoofCmd.Flags().VarP(&opt.spoof.source, "source", "s", "Source address")
+	spoofCmd.Flags().VarP(&opt.spoof.destination, "dest", "d", "Destination address")
 	spoofCmd.Flags().VarP(&opt.spoof.typ, "spoof-type", "t", "Type for spoof rule")
 
 	redirectCmd.AddCommand(spoofCmd)
@@ -72,7 +72,7 @@ func (spoof) showList() error {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Interface", "Spoof Type", "Source", "Destination"})
 	for _, rule := range resp.Rules {
-		table.Append([]string{rule.Interface, rule.SpoofType.String(), rule.Source, rule.Destination})
+		table.Append([]string{rule.Interface, rule.SpoofType.String(), rule.Source.String(), rule.Destination.String()})
 	}
 	table.Render()
 

@@ -139,11 +139,27 @@ const (
 	SpoofOperation_Del
 )
 
+func (o SpoofOperation) String() string {
+	switch o {
+	case SpoofOperation_Nop:
+		return "nop"
+	case SpoofOperation_List:
+		return "list"
+	case SpoofOperation_ListTypes:
+		return "list-types"
+	case SpoofOperation_Add:
+		return "add"
+	case SpoofOperation_Del:
+		return "del"
+	}
+	return "unknown"
+}
+
 type SpoofRule struct {
 	Interface   string    `json:"interface,omitempty"`
 	SpoofType   SpoofType `json:"spoof_type"`
-	Source      string    `json:"source"`
-	Destination string    `json:"dest"`
+	Source      AddrPort  `json:"source"`
+	Destination AddrPort  `json:"dest"`
 }
 
 type SpoofReq struct {
