@@ -15,7 +15,6 @@ import (
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
 	"github.com/zxhio/xdpass/internal/stats"
-	"github.com/zxhio/xdpass/internal/xdpflags"
 	"github.com/zxhio/xdpass/pkg/utils"
 	"github.com/zxhio/xdpass/pkg/xdp"
 	"github.com/zxhio/xdpass/pkg/xdpprog"
@@ -23,23 +22,27 @@ import (
 )
 
 type redirectOpts struct {
-	queueID     int
-	xdpFlags    xdpflags.XDPFlagsMode
-	pollTimeout int
+	queueID      int
+	attachMode   xdp.XDPAttachMode
+	xskBindFlags xdp.XSKBindFlags
+	pollTimeout  int
 }
 
 type RedirectOpt func(*redirectOpts)
 
 func WithRedirectQueueID(queueID int) RedirectOpt {
-	return func(dho *redirectOpts) { dho.queueID = queueID }
+	return func(o *redirectOpts) { o.queueID = queueID }
 }
 
-func WithRedirectXDPFlags(flags xdpflags.XDPFlagsMode) RedirectOpt {
-	return func(dho *redirectOpts) { dho.xdpFlags = flags }
+func WithRedirectXDPFlags(attachMode xdp.XDPAttachMode, xdkBindFlags xdp.XSKBindFlags) RedirectOpt {
+	return func(o *redirectOpts) {
+		o.attachMode = attachMode
+		o.xskBindFlags = xdkBindFlags
+	}
 }
 
 func WithRedirectPollTimeout(timeout int) RedirectOpt {
-	return func(dho *redirectOpts) { dho.pollTimeout = timeout }
+	return func(o *redirectOpts) { o.pollTimeout = timeout }
 }
 
 type Redirect struct {
@@ -65,12 +68,12 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 	}
 	logrus.WithFields(logrus.Fields{
 		"name": ifaceLink.Attrs().Name, "index": ifaceLink.Attrs().Index,
-		"num_RxWorker": ifaceLink.Attrs().NumRxQueues, "num_tx": ifaceLink.Attrs().NumTxQueues,
-	}).Info("Detected link")
+		"num_rx": ifaceLink.Attrs().NumRxQueues, "num_tx": ifaceLink.Attrs().NumTxQueues,
+	}).Info("Found link")
 
 	var closers utils.NamedClosers
 
-	s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(o.queueID), xdp.WithXDPBindFlags(unix.XDP_FLAGS_SKB_MODE))
+	s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(o.queueID), xdp.WithXDPBindFlags(o.xskBindFlags))
 	if err != nil {
 		return nil, err
 	}
@@ -88,14 +91,14 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 	xdpLink, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.XdpRedirectXskProg,
 		Interface: ifaceLink.Attrs().Index,
-		Flags:     link.XDPAttachFlags(o.xdpFlags),
+		Flags:     link.XDPAttachFlags(o.attachMode),
 	})
 	if err != nil {
 		closers.Close(nil)
 		return nil, errors.Wrap(err, "link.AttachXDP")
 	}
-	closers = append(closers, utils.NamedCloser{Name: "ebpflink.Link", Close: xdpLink.Close})
-	logrus.WithField("flags", o.xdpFlags).Info("Attached xdp prog")
+	closers = append(closers, utils.NamedCloser{Name: "ebpf.Link", Close: xdpLink.Close})
+	logrus.WithField("flags", o.attachMode).Info("Attached xdp prog")
 
 	info, err := xdpLink.Info()
 	if err != nil {
@@ -253,7 +256,7 @@ func (r *Redirect) HandleReqData(data []byte) ([]byte, error) {
 }
 
 func stuffFillQ(x *xdp.XDPSocket) {
-	frames := x.Umem.Fill.Free(x.FreeUmemFrames())
+	frames := x.Umem.Fill.GetFreeNum(x.GetUmemFrameFreeNum())
 	if frames == 0 {
 		return
 	}

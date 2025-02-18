@@ -24,7 +24,7 @@ func (q *queue[T]) get(idx uint32) *T {
 }
 
 func (q *queue[T]) format(name string) string {
-	return fmt.Sprintf("%s - cached_prod:%d cached_cons:%d producer:%d consumer: %d",
+	return fmt.Sprintf("%s(cached_prod:%d cached_cons:%d producer:%d consumer:%d)",
 		name, q.cachedProd, q.cachedCons, atomic.LoadUint32(q.producer), atomic.LoadUint32(q.consumer))
 }
 
@@ -33,7 +33,7 @@ type prodQ[T any] queue[T]
 
 func (q *prodQ[T]) raw() *queue[T] { return (*queue[T])(q) }
 
-func (q *prodQ[T]) Free(n uint32) uint32 {
+func (q *prodQ[T]) GetFreeNum(n uint32) uint32 {
 	entries := q.cachedCons - q.cachedProd
 	if entries >= n {
 		return entries
@@ -44,7 +44,7 @@ func (q *prodQ[T]) Free(n uint32) uint32 {
 }
 
 func (q *prodQ[T]) Reserve(n uint32, idx *uint32) uint32 {
-	if q.Free(n) < n {
+	if q.GetFreeNum(n) < n {
 		return 0
 	}
 	*idx = q.cachedProd
@@ -61,7 +61,7 @@ type consQ[T any] queue[T]
 
 func (q *consQ[T]) raw() *queue[T] { return (*queue[T])(q) }
 
-func (q *consQ[T]) Avail(n uint32) uint32 {
+func (q *consQ[T]) GetAvailNum(n uint32) uint32 {
 	entries := q.cachedProd - q.cachedCons
 	if entries == 0 {
 		q.cachedProd = atomic.LoadUint32(q.producer)
@@ -71,7 +71,7 @@ func (q *consQ[T]) Avail(n uint32) uint32 {
 }
 
 func (q *consQ[T]) Peek(n uint32, idx *uint32) uint32 {
-	entries := q.Avail(n)
+	entries := q.GetAvailNum(n)
 	if entries > 0 {
 		*idx = q.cachedCons
 		q.cachedCons += entries

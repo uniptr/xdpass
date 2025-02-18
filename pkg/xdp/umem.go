@@ -17,7 +17,7 @@ type XDPUmem struct {
 	opts xdpOpts
 }
 
-func NewUmem(sockfd int, opts ...XDPOpt) (*XDPUmem, error) {
+func NewXDPUmem(sockfd int, opts ...XDPOpt) (*XDPUmem, error) {
 	o := XDPDefaultOpts()
 	for _, opt := range opts {
 		opt(&o)
@@ -28,13 +28,13 @@ func NewUmem(sockfd int, opts ...XDPOpt) (*XDPUmem, error) {
 		return nil, fmt.Errorf("invalid size of frame %d: must be either 2048 or 4096", o.FrameSize)
 	}
 	if bits.OnesCount32(o.FrameNum) != 1 {
-		return nil, errors.Errorf("invalid number of frame %d, must be a power of 2", o.FrameNum)
+		return nil, wrapPowerOf2Error(o.FrameNum, "invalid number of frame")
 	}
 	if bits.OnesCount32(o.FillSize) != 1 {
-		return nil, errors.Errorf("invalid size of fill ring %d, must be a power of 2", o.FrameNum)
+		return nil, wrapPowerOf2Error(o.FillSize, "invalid size of fill ring")
 	}
 	if bits.OnesCount32(o.CompSize) != 1 {
-		return nil, errors.Errorf("invalid size of compeletion ring %d, must be a power of 2", o.FrameNum)
+		return nil, wrapPowerOf2Error(o.CompSize, "invalid size of compeletion ring")
 	}
 
 	area, err := unix.Mmap(-1, 0, int(o.FrameNum*o.FrameSize),
