@@ -38,3 +38,13 @@ To filter network packets by setting an IP or CIDR.
 ## xdpassd
 
 Using XDP to filter or redirect packets to user space.
+
+## scripts
+
+### make_test_env.sh
+
+Create a environment with a bridge and two namespaces for testing.
+
+```shell
+$ ./scripts/make_test_env.sh add
+```
