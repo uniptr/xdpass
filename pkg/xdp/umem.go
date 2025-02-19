@@ -9,12 +9,15 @@ import (
 )
 
 type XDPUmem struct {
-	mem []byte
+	mem      []byte
+	fd       int
+	refCount uint32
+
+	frameAddrs   []uint64 // Save fill/completion ring element or rx/tx desc.Addr
+	frameFreeNum uint32
 
 	Fill FillQueue
 	Comp CompletionQueue
-
-	opts xdpOpts
 }
 
 func NewXDPUmem(sockfd int, opts ...XDPOpt) (*XDPUmem, error) {
@@ -88,11 +91,18 @@ func NewXDPUmem(sockfd int, opts ...XDPOpt) (*XDPUmem, error) {
 	comp.mask = o.CompSize - 1
 	comp.size = o.CompSize
 
+	frames := []uint64{}
+	for i := uint32(0); i < o.FrameNum; i++ {
+		frames = append(frames, uint64(i*o.FrameSize))
+	}
+
 	return &XDPUmem{
-		mem:  area,
-		Fill: fill,
-		Comp: comp,
-		opts: o,
+		mem:          area,
+		fd:           sockfd,
+		frameAddrs:   frames,
+		frameFreeNum: o.FrameNum,
+		Fill:         fill,
+		Comp:         comp,
 	}, nil
 }
 
@@ -105,4 +115,25 @@ func (x *XDPUmem) Close() error {
 
 func (x *XDPUmem) GetData(desc *unix.XDPDesc) []byte {
 	return x.mem[desc.Addr : desc.Addr+uint64(desc.Len)]
+}
+
+func (x *XDPUmem) AllocFrame() uint64 {
+	if x.frameFreeNum == 0 {
+		return INVALID_UMEM_FRAME
+	}
+
+	x.frameFreeNum--
+	frameAddr := x.frameAddrs[x.frameFreeNum]
+	x.frameAddrs[x.frameFreeNum] = INVALID_UMEM_FRAME
+
+	return frameAddr
+}
+
+func (x *XDPUmem) FreeFrame(addr uint64) {
+	x.frameAddrs[x.frameFreeNum] = addr
+	x.frameFreeNum++
+}
+
+func (x *XDPUmem) GetFrameFreeNum() uint32 {
+	return x.frameFreeNum
 }

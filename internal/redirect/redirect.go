@@ -15,6 +15,7 @@ import (
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
 	"github.com/zxhio/xdpass/internal/stats"
+	"github.com/zxhio/xdpass/pkg/netq"
 	"github.com/zxhio/xdpass/pkg/utils"
 	"github.com/zxhio/xdpass/pkg/xdp"
 	"github.com/zxhio/xdpass/pkg/xdpprog"
@@ -48,8 +49,8 @@ func WithRedirectPollTimeout(timeout int) RedirectOpt {
 type Redirect struct {
 	*redirectOpts
 
-	*xdp.XDPSocket
 	*xdpprog.Objects
+	xsks    []*xdp.XDPSocket
 	filter  *firewall.Filter
 	server  *cmdconn.TLVServer
 	handles map[protos.RedirectType]handle.RedirectHandle
@@ -72,13 +73,6 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 	}).Info("Found link")
 
 	var closers utils.NamedClosers
-
-	s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(o.queueID), xdp.WithXDPBindFlags(o.xskBindFlags))
-	if err != nil {
-		return nil, err
-	}
-	closers = append(closers, utils.NamedCloser{Name: "xdp.XDPSocket", Close: s.Close})
-	logrus.WithFields(logrus.Fields{"fd": s.SocketFd(), "queue_id": o.queueID}).Info("New xdp socket")
 
 	objs, err := xdpprog.LoadObjects(nil)
 	if err != nil {
@@ -107,13 +101,33 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 		logrus.WithFields(logrus.Fields{"id": info.ID, "type": info.Type, "prog": info.Program}).Info("Get xdp link info")
 	}
 
-	// Update xsk map
-	err = objs.XskMap.Update(uint32(o.queueID), uint32(s.SocketFd()), 0)
+	queues, err := netq.GetRxQueues(ifaceName)
 	if err != nil {
-		closers.Close(nil)
-		return nil, errors.Wrap(err, "XskMap.Update")
+		return nil, err
 	}
-	logrus.WithFields(logrus.Fields{"k": o.queueID, "v": s.SocketFd()}).Info("Update xsk map")
+	logrus.WithField("queues", queues).Info("Get rx queues")
+
+	var xsks []*xdp.XDPSocket
+	for _, queueID := range queues {
+		s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(queueID), xdp.WithXDPBindFlags(o.xskBindFlags))
+		if err != nil {
+			return nil, err
+		}
+
+		closers = append(closers, utils.NamedCloser{Name: fmt.Sprintf("xdp.XDPSocket(fd:%d queue:%d)", s.SocketFd(), queueID), Close: s.Close})
+		xsks = append(xsks, s)
+		logrus.WithFields(logrus.Fields{"fd": s.SocketFd(), "queue_id": queueID}).Info("New xdp socket")
+
+		// Update xsk map
+		// Note: xsk map not support lookup element
+		// See kernel tree net/xdp/xdpmap.c *xsk_map_lookup_elem_sys_only* implement
+		err = objs.XskMap.Update(uint32(queueID), uint32(s.SocketFd()), 0)
+		if err != nil {
+			closers.Close(nil)
+			return nil, errors.Wrap(err, "XskMap.Update")
+		}
+		logrus.WithFields(logrus.Fields{"k": queueID, "v": s.SocketFd()}).Info("Update xsk map")
+	}
 
 	filter, err := firewall.NewFilter(ifaceName, objs.IpLpmTrie)
 	if err != nil {
@@ -123,7 +137,7 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 
 	r := Redirect{
 		redirectOpts: &o,
-		XDPSocket:    s,
+		xsks:         xsks,
 		Objects:      objs,
 		filter:       filter,
 	}
@@ -173,8 +187,6 @@ func (r *Redirect) setHandles(ifaceName string) error {
 func (r *Redirect) Run(ctx context.Context) error {
 	var (
 		done bool
-		idx  uint32
-		n    uint32
 		stat stats.Statistics
 	)
 
@@ -183,46 +195,57 @@ func (r *Redirect) Run(ctx context.Context) error {
 		done = true
 	}()
 
-	go r.server.Serve(ctx)
+	// Close in r.closers, not use ctx args
+	go r.server.Serve(context.Background())
 
 	for !done {
-		err := r.poll()
+		err := r.waitPoll()
 		if err != nil {
 			return err
 		}
 
-		stuffFillQ(r.XDPSocket)
-
-		n = r.Rx.Peek(64, &idx)
-		if n == 0 {
-			continue
+		for _, xsk := range r.xsks {
+			r.handleXSK(xsk, &stat)
 		}
-
-		for i := uint32(0); i < n; i++ {
-			desc := r.Rx.GetDesc(idx)
-
-			stat.Bytes += uint64(desc.Len)
-			stat.Packets++
-
-			for _, handle := range r.handles {
-				handle.HandlePacketData(r.Umem.GetData(desc))
-			}
-
-			r.FreeUmemFrame(desc.Addr)
-		}
-
-		r.Rx.Release(n)
 	}
 
 	return nil
 }
 
-func (r *Redirect) poll() error {
+func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, stat *stats.Statistics) {
+	stuffFillQ(xsk)
+
+	var idx uint32
+	n := xsk.Rx.Peek(64, &idx)
+	if n == 0 {
+		return
+	}
+
+	for i := uint32(0); i < n; i++ {
+		desc := xsk.Rx.GetDesc(idx)
+
+		stat.Bytes += uint64(desc.Len)
+		stat.Packets++
+
+		for _, handle := range r.handles {
+			handle.HandlePacketData(xsk.Umem.GetData(desc))
+		}
+		xsk.Umem.FreeFrame(desc.Addr)
+	}
+
+	xsk.Rx.Release(n)
+}
+
+func (r *Redirect) waitPoll() error {
 	if r.pollTimeout == 0 {
 		return nil
 	}
 
-	_, err := unix.Poll([]unix.PollFd{{Fd: int32(r.SocketFd()), Events: unix.POLLIN}}, r.pollTimeout)
+	fds := []unix.PollFd{}
+	for _, xsk := range r.xsks {
+		fds = append(fds, unix.PollFd{Fd: int32(xsk.SocketFd()), Events: unix.POLLIN})
+	}
+	_, err := unix.Poll(fds, r.pollTimeout)
 	if err != nil {
 		if errors.Is(err, unix.EINTR) {
 			return nil
@@ -256,7 +279,7 @@ func (r *Redirect) HandleReqData(data []byte) ([]byte, error) {
 }
 
 func stuffFillQ(x *xdp.XDPSocket) {
-	frames := x.Umem.Fill.GetFreeNum(x.GetUmemFrameFreeNum())
+	frames := x.Umem.Fill.GetFreeNum(x.Umem.GetFrameFreeNum())
 	if frames == 0 {
 		return
 	}
@@ -265,7 +288,7 @@ func stuffFillQ(x *xdp.XDPSocket) {
 	x.Umem.Fill.Reserve(frames, &idx)
 
 	for i := uint32(0); i < frames; i++ {
-		*x.Umem.Fill.GetAddr(idx) = x.AllocUmemFrame()
+		*x.Umem.Fill.GetAddr(idx) = x.Umem.AllocFrame()
 	}
 	x.Umem.Fill.Submit(frames)
 }

@@ -52,31 +52,33 @@ func (m *XDPAttachMode) Set(s string) error {
 type XSKBindFlags int
 
 const (
-	XSKBindFlagsSharedUmem XSKBindFlags = unix.XDP_SHARED_UMEM
 	XSKBindFlagsCopy       XSKBindFlags = unix.XDP_COPY
 	XSKBindFlagsZeroCopy   XSKBindFlags = unix.XDP_ZEROCOPY
 	XSKBindFlagsNeedWakeup XSKBindFlags = unix.XDP_USE_NEED_WAKEUP
+
+	// _XSKBindFlagsSharedUmem is not exported directly.
+	_XSKBindFlagsSharedUmem XSKBindFlags = unix.XDP_SHARED_UMEM
 )
 
 const (
-	XSKBindFlagsStrSharedUmem = "shared-umem"
-	XSKBindFlagsStrCopy       = "copy"
-	XSKBindFlagsStrZeroCopy   = "zero-copy"
-	XSKBindFlagsStrNeedWakeup = "use-need-wakeup"
+	XSKBindFlagsStrCopy        = "copy"
+	XSKBindFlagsStrZeroCopy    = "zero-copy"
+	XSKBindFlagsStrNeedWakeup  = "use-need-wakeup"
+	_XSKBindFlagsStrSharedUmem = "shared-umem"
 )
 
 var bindFlagsLookup = map[string]XSKBindFlags{
-	XSKBindFlagsStrSharedUmem: XSKBindFlagsSharedUmem,
-	XSKBindFlagsStrCopy:       XSKBindFlagsCopy,
-	XSKBindFlagsStrZeroCopy:   XSKBindFlagsZeroCopy,
-	XSKBindFlagsStrNeedWakeup: XSKBindFlagsNeedWakeup,
+	XSKBindFlagsStrCopy:        XSKBindFlagsCopy,
+	XSKBindFlagsStrZeroCopy:    XSKBindFlagsZeroCopy,
+	XSKBindFlagsStrNeedWakeup:  XSKBindFlagsNeedWakeup,
+	_XSKBindFlagsStrSharedUmem: _XSKBindFlagsSharedUmem,
 }
 
 var bindFlagsStrLookup = map[XSKBindFlags]string{
-	XSKBindFlagsSharedUmem: XSKBindFlagsStrSharedUmem,
-	XSKBindFlagsCopy:       XSKBindFlagsStrCopy,
-	XSKBindFlagsZeroCopy:   XSKBindFlagsStrZeroCopy,
-	XSKBindFlagsNeedWakeup: XSKBindFlagsStrNeedWakeup,
+	XSKBindFlagsCopy:        XSKBindFlagsStrCopy,
+	XSKBindFlagsZeroCopy:    XSKBindFlagsStrZeroCopy,
+	XSKBindFlagsNeedWakeup:  XSKBindFlagsStrNeedWakeup,
+	_XSKBindFlagsSharedUmem: _XSKBindFlagsStrSharedUmem,
 }
 
 func (f XSKBindFlags) String() string {

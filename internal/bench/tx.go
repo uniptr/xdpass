@@ -126,7 +126,7 @@ func (b *xdpTx) Transmit(opt *TxOpt) {
 	for i := uint32(0); i < opt.Batch; i++ {
 		desc := b.Tx.GetDesc(idx + i)
 		desc.Len = uint32(len(opt.Data))
-		desc.Addr = b.AllocUmemFrame()
+		desc.Addr = b.Umem.AllocFrame()
 		copy(b.Umem.GetData(desc), opt.Data)
 	}
 
@@ -157,7 +157,7 @@ func (b *xdpTx) complete(opt *TxOpt) {
 	for i := uint32(0); i < completed; i++ {
 		opt.stat.Packets++
 		opt.stat.Bytes += uint64(len(opt.Data))
-		b.FreeUmemFrame(*b.Umem.Comp.GetAddr(idx + i))
+		b.Umem.FreeFrame(*b.Umem.Comp.GetAddr(idx + i))
 	}
 	b.Umem.Comp.Release(completed)
 	b.standing -= completed

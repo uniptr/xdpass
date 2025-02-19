@@ -29,6 +29,9 @@ type xdpOpts struct {
 	FrameHeadRoom uint32
 	UmemFlags     uint32
 
+	// Shared umem
+	sharedUmemPtr **XDPUmem
+
 	// Rx/Tx opts
 	RxSize uint32
 	TxSize uint32
@@ -70,6 +73,10 @@ func WithXDPUmemFlags(umemFlags uint32) XDPOpt {
 	return func(o *xdpOpts) { o.UmemFlags = umemFlags }
 }
 
+func WithXDPSharedUmem(umem **XDPUmem) XDPOpt {
+	return func(o *xdpOpts) { o.sharedUmemPtr = umem }
+}
+
 func WithXDPRxTx(rxSize, txSize uint32) XDPOpt {
 	return func(o *xdpOpts) {
 		o.RxSize = rxSize
@@ -82,17 +89,29 @@ func WithXDPBindFlags(bindFlags XSKBindFlags) XDPOpt {
 }
 
 type XDPSocket struct {
-	opts xdpOpts
-
-	sockfd           int
-	umemFrameAddrs   []uint64 // Save fill/completion ring element or rx/tx desc.Addr
-	umemFrameFreeNum uint32
+	sockfd  int
+	queueID uint32
 
 	Umem *XDPUmem
 	Rx   RxQueue
 	Tx   TxQueue
 }
 
+// NewXDPSocket create a new xdp socket
+//
+// Note(queue):
+//
+//	Each xsk can only be bound to one queue
+//
+// Note(umem):
+//
+//	The idea is to share the same umem, fill ring, and completion ring for multiple
+//	sockets. The sockets sharing that umem/fr/cr are tied (bound) to one
+//	hardware ring.
+//
+// Ref:
+//
+//	https://marc.info/?l=xdp-newbies&m=158399973616672&w=2
 func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 	o := XDPDefaultOpts()
 	for _, opt := range opts {
@@ -112,9 +131,17 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 		return nil, errors.Wrap(err, "unix.Socket")
 	}
 
-	umem, err := NewXDPUmem(sockfd, opts...)
-	if err != nil {
-		return nil, err
+	var umem *XDPUmem
+	if o.sharedUmemPtr != nil && *o.sharedUmemPtr != nil {
+		umem = *o.sharedUmemPtr
+	} else {
+		umem, err = NewXDPUmem(sockfd, opts...)
+		if err != nil {
+			return nil, err
+		}
+		if o.sharedUmemPtr != nil && *o.sharedUmemPtr == nil {
+			*o.sharedUmemPtr = umem
+		}
 	}
 
 	err = unix.SetsockoptInt(sockfd, unix.SOL_XDP, unix.XDP_RX_RING, int(o.RxSize))
@@ -160,59 +187,44 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 	tx.cachedCons = atomic.LoadUint32(tx.consumer) + o.TxSize
 
 	// Bind xdp socket
-	err = unix.Bind(sockfd, &unix.SockaddrXDP{Flags: uint16(o.BindFlags), Ifindex: ifIndex, QueueID: queueID})
+	addr := &unix.SockaddrXDP{Ifindex: ifIndex, QueueID: queueID}
+	if umem.refCount > 0 {
+		// Cannot specify flags for shared sockets.
+		// See kernel source tree net/xdp/xsk.c *xsk_bind* implement
+		addr.Flags = unix.XDP_SHARED_UMEM
+		addr.SharedUmemFD = uint32(umem.fd)
+	} else {
+		addr.Flags = uint16(o.BindFlags)
+	}
+
+	err = unix.Bind(sockfd, addr)
 	if err != nil {
 		return nil, errors.Wrap(err, "unix.Bind")
 	}
-
-	frames := []uint64{}
-	for i := uint32(0); i < o.FrameNum; i++ {
-		frames = append(frames, uint64(i*o.FrameSize))
-	}
+	umem.refCount++
 
 	return &XDPSocket{
-		opts:             o,
-		sockfd:           sockfd,
-		umemFrameAddrs:   frames,
-		umemFrameFreeNum: o.FrameNum,
-		Umem:             umem,
-		Rx:               rx,
-		Tx:               tx,
+		sockfd: sockfd,
+		Umem:   umem,
+		Rx:     rx,
+		Tx:     tx,
 	}, nil
 }
 
 func (x *XDPSocket) Close() error {
 	unix.Close(x.sockfd)
-	x.Umem.Close()
+	if x.Umem.refCount == 1 {
+		x.Umem.Close()
+	}
+	x.Umem.refCount--
 	unix.Munmap(x.Rx.mem)
 	unix.Munmap(x.Tx.mem)
 	return nil
 }
 
-func (x *XDPSocket) Opts() xdpOpts { return x.opts }
-
 func (x *XDPSocket) SocketFd() int { return x.sockfd }
 
-func (x *XDPSocket) AllocUmemFrame() uint64 {
-	if x.umemFrameFreeNum == 0 {
-		return INVALID_UMEM_FRAME
-	}
-
-	x.umemFrameFreeNum--
-	frameAddr := x.umemFrameAddrs[x.umemFrameFreeNum]
-	x.umemFrameAddrs[x.umemFrameFreeNum] = INVALID_UMEM_FRAME
-
-	return frameAddr
-}
-
-func (x *XDPSocket) FreeUmemFrame(addr uint64) {
-	x.umemFrameAddrs[x.umemFrameFreeNum] = addr
-	x.umemFrameFreeNum++
-}
-
-func (x *XDPSocket) GetUmemFrameFreeNum() uint32 {
-	return x.umemFrameFreeNum
-}
+func (x *XDPSocket) QueueID() uint32 { return x.queueID }
 
 func wrapPowerOf2Error(n uint32, msg string) error {
 	return errors.Errorf("invalid %s %d, must be a power of 2", msg, n)

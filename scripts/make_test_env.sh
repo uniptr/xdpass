@@ -6,7 +6,7 @@
 # The bridge has $num_rx rx queues and $num_tx tx queues and $num_ns namespaces
 num_rx=4
 num_tx=4
-num_ns=2
+num_ns=4
 
 add_netns() {
     netns_name=ns$1
