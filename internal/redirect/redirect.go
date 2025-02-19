@@ -109,7 +109,8 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 
 	var xsks []*xdp.XDPSocket
 	for _, queueID := range queues {
-		s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(queueID), xdp.WithXDPBindFlags(o.xskBindFlags))
+		s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(queueID),
+			xdp.WithXDPBindFlags(o.xskBindFlags), xdp.WithXDPRxTx(xdp.ConsRingDefaultDescs, 0))
 		if err != nil {
 			return nil, err
 		}

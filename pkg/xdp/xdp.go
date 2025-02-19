@@ -118,12 +118,15 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 		opt(&o)
 	}
 
-	// Check Rx/Tx ring size
-	if bits.OnesCount32(o.RxSize) != 1 {
+	// Check Rx/Tx ring size, allow use one ring.
+	if bits.OnesCount32(o.RxSize) != 1 && o.RxSize != 0 {
 		return nil, wrapPowerOf2Error(o.RxSize, "invalid size of rx ring")
 	}
-	if bits.OnesCount32(o.TxSize) != 1 {
+	if bits.OnesCount32(o.TxSize) != 1 && o.TxSize != 0 {
 		return nil, wrapPowerOf2Error(o.TxSize, "invalid size of tx ring")
+	}
+	if o.RxSize == 0 && o.TxSize == 0 {
+		return nil, errors.New("invalid size, both rx/tx rings are 0")
 	}
 
 	sockfd, err := unix.Socket(unix.AF_XDP, unix.SOCK_RAW, 0)
@@ -144,47 +147,52 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 		}
 	}
 
-	err = unix.SetsockoptInt(sockfd, unix.SOL_XDP, unix.XDP_RX_RING, int(o.RxSize))
-	if err != nil {
-		return nil, errors.Wrap(err, "unix.SetsockoptInt(XDP_RX_RING)")
-	}
-	err = unix.SetsockoptInt(sockfd, unix.SOL_XDP, unix.XDP_TX_RING, int(o.TxSize))
-	if err != nil {
-		return nil, errors.Wrap(err, "unix.SetsockoptInt(XDP_TX_RING)")
-	}
-
 	off, err := getXDPMmapOffsets(sockfd)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create rx ring
-	rxMem, err := unix.Mmap(sockfd, unix.XDP_PGOFF_RX_RING, int(off.Rx.Desc+uint64(o.RxSize)*sizeofXDPDesc),
-		unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
-	if err != nil {
-		return nil, errors.Wrap(err, "unix.Mmap(XDP_PGOFF_RX_RING)")
-	}
-
 	var rx RxQueue
-	initQueueByOffset(rx.raw(), rxMem, &off.Rx, o.RxSize)
-	rx.mask = o.RxSize - 1
-	rx.size = o.RxSize
-	rx.cachedProd = atomic.LoadUint32(rx.producer)
-	rx.cachedCons = atomic.LoadUint32(rx.consumer)
+	if o.RxSize != 0 {
+		err = unix.SetsockoptInt(sockfd, unix.SOL_XDP, unix.XDP_RX_RING, int(o.RxSize))
+		if err != nil {
+			return nil, errors.Wrap(err, "unix.SetsockoptInt(XDP_RX_RING)")
+		}
+
+		rxMem, err := unix.Mmap(sockfd, unix.XDP_PGOFF_RX_RING, int(off.Rx.Desc+uint64(o.RxSize)*sizeofXDPDesc),
+			unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
+		if err != nil {
+			return nil, errors.Wrap(err, "unix.Mmap(XDP_PGOFF_RX_RING)")
+		}
+
+		initQueueByOffset(rx.raw(), rxMem, &off.Rx, o.RxSize)
+		rx.mask = o.RxSize - 1
+		rx.size = o.RxSize
+		rx.cachedProd = atomic.LoadUint32(rx.producer)
+		rx.cachedCons = atomic.LoadUint32(rx.consumer)
+	}
 
 	// Create tx ring
-	txMem, err := unix.Mmap(sockfd, unix.XDP_PGOFF_TX_RING, int(off.Tx.Desc+uint64(o.TxSize)*sizeofXDPDesc),
-		unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
-	if err != nil {
-		return nil, errors.Wrap(err, "unix.Mmap(XDP_PGOFF_TX_RING)")
-	}
-
 	var tx TxQueue
-	initQueueByOffset(tx.raw(), txMem, &off.Tx, o.TxSize)
-	tx.mask = o.TxSize - 1
-	tx.size = o.TxSize
-	tx.cachedProd = atomic.LoadUint32(tx.producer)
-	tx.cachedCons = atomic.LoadUint32(tx.consumer) + o.TxSize
+	if o.TxSize != 0 {
+		err = unix.SetsockoptInt(sockfd, unix.SOL_XDP, unix.XDP_TX_RING, int(o.TxSize))
+		if err != nil {
+			return nil, errors.Wrap(err, "unix.SetsockoptInt(XDP_TX_RING)")
+		}
+
+		txMem, err := unix.Mmap(sockfd, unix.XDP_PGOFF_TX_RING, int(off.Tx.Desc+uint64(o.TxSize)*sizeofXDPDesc),
+			unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED|unix.MAP_POPULATE)
+		if err != nil {
+			return nil, errors.Wrap(err, "unix.Mmap(XDP_PGOFF_TX_RING)")
+		}
+
+		initQueueByOffset(tx.raw(), txMem, &off.Tx, o.TxSize)
+		tx.mask = o.TxSize - 1
+		tx.size = o.TxSize
+		tx.cachedProd = atomic.LoadUint32(tx.producer)
+		tx.cachedCons = atomic.LoadUint32(tx.consumer) + o.TxSize
+	}
 
 	// Bind xdp socket
 	addr := &unix.SockaddrXDP{Ifindex: ifIndex, QueueID: queueID}
