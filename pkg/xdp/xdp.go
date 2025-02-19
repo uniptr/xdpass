@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/bits"
 	"sync/atomic"
+	"time"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
@@ -92,9 +93,12 @@ type XDPSocket struct {
 	sockfd  int
 	queueID uint32
 
-	Umem *XDPUmem
-	Rx   RxQueue
-	Tx   TxQueue
+	umem *XDPUmem
+	rx   RxQueue
+	tx   TxQueue
+
+	// for tx
+	standing uint32
 }
 
 // NewXDPSocket create a new xdp socket
@@ -213,26 +217,122 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 
 	return &XDPSocket{
 		sockfd: sockfd,
-		Umem:   umem,
-		Rx:     rx,
-		Tx:     tx,
+		umem:   umem,
+		rx:     rx,
+		tx:     tx,
 	}, nil
 }
 
 func (x *XDPSocket) Close() error {
+	// Complete all pending tx
+	x.completeAll()
+
 	unix.Close(x.sockfd)
-	if x.Umem.refCount == 1 {
-		x.Umem.Close()
+	if x.umem.refCount == 1 {
+		x.umem.Close()
 	}
-	x.Umem.refCount--
-	unix.Munmap(x.Rx.mem)
-	unix.Munmap(x.Tx.mem)
+	x.umem.refCount--
+	unix.Munmap(x.rx.mem)
+	unix.Munmap(x.tx.mem)
 	return nil
 }
 
 func (x *XDPSocket) SocketFd() int { return x.sockfd }
 
 func (x *XDPSocket) QueueID() uint32 { return x.queueID }
+
+// Peek at RX non-blockingly and copy data to vec
+func (x *XDPSocket) Readv(vec [][]byte) uint32 {
+	x.stuffFillQ()
+
+	var idx uint32
+	n := x.rx.Peek(uint32(len(vec)), &idx)
+	if n == 0 {
+		return 0
+	}
+
+	for i := uint32(0); i < n; i++ {
+		desc := x.rx.GetDesc(idx + i)
+		copy(vec[i], x.umem.GetData(desc))
+		x.umem.FreeFrame(desc.Addr)
+	}
+	x.rx.Release(n)
+
+	return n
+}
+
+func (x *XDPSocket) stuffFillQ() {
+	frames := x.umem.Fill.GetFreeNum(x.umem.GetFrameFreeNum())
+	if frames == 0 {
+		return
+	}
+
+	var idx uint32
+	x.umem.Fill.Reserve(frames, &idx)
+
+	for i := uint32(0); i < frames; i++ {
+		*x.umem.Fill.GetAddr(idx) = x.umem.AllocFrame()
+	}
+	x.umem.Fill.Submit(frames)
+}
+
+// Reserve non-blockingly and copy data to TX
+// Return the vec written
+func (x *XDPSocket) Writev(vec [][]byte) uint32 {
+	idx := uint32(0)
+	batch := uint32(len(vec))
+
+	if x.tx.Reserve(batch, &idx) < batch {
+		x.complete()
+		return 0
+	}
+
+	for i := uint32(0); i < batch; i++ {
+		desc := x.tx.GetDesc(idx + i)
+		desc.Len = uint32(len(vec[i]))
+		desc.Addr = x.umem.AllocFrame()
+		copy(x.umem.GetData(desc), vec[i])
+	}
+
+	x.standing += batch
+	x.tx.Submit(batch)
+	x.complete()
+	return batch
+}
+
+func (x *XDPSocket) complete() {
+	if x.standing == 0 {
+		return
+	}
+
+	err := unix.Sendto(x.sockfd, nil, unix.MSG_DONTWAIT, nil)
+	if err != nil {
+		// TODO: add statistic
+	}
+
+	var (
+		idx       uint32
+		completed uint32
+	)
+	completed = x.umem.Comp.Peek(x.standing, &idx)
+	if completed == 0 {
+		return
+	}
+	for i := uint32(0); i < completed; i++ {
+		// TODO: add pkts statistic
+		x.umem.FreeFrame(*x.umem.Comp.GetAddr(idx + i))
+	}
+	x.umem.Comp.Release(completed)
+	x.standing -= completed
+}
+
+func (x *XDPSocket) completeAll() {
+	// TODO: limit call count
+	for x.standing != 0 {
+		x.complete()
+		time.Sleep(time.Millisecond * 10)
+	}
+}
 
 func wrapPowerOf2Error(n uint32, msg string) error {
 	return errors.Errorf("invalid %s %d, must be a power of 2", msg, n)

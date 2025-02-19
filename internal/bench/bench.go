@@ -126,7 +126,7 @@ func runTxBenchmarkGroup(tg *txGroup) {
 	}
 
 	for _, tx := range tg.txList {
-		tx.Wait(&tg.TxOpt)
+		tx.Close()
 	}
 }
 

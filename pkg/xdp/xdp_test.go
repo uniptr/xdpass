@@ -62,7 +62,7 @@ func TestXDPSocketSharedUmem(t *testing.T) {
 			t.Fatal(err)
 		}
 		xsks[i] = x
-		assert.Equal(t, x.Umem.refCount, uint32(i+1))
+		assert.Equal(t, x.umem.refCount, uint32(i+1))
 	}
 
 	for i := 0; i < numXsks; i++ {

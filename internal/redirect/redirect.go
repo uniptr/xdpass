@@ -199,6 +199,12 @@ func (r *Redirect) Run(ctx context.Context) error {
 	// Close in r.closers, not use ctx args
 	go r.server.Serve(context.Background())
 
+	// TODO: use option vec size
+	dataVec := make([][]byte, 64)
+	for i := range dataVec {
+		dataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
+	}
+
 	for !done {
 		err := r.waitPoll()
 		if err != nil {
@@ -206,35 +212,27 @@ func (r *Redirect) Run(ctx context.Context) error {
 		}
 
 		for _, xsk := range r.xsks {
-			r.handleXSK(xsk, &stat)
+			r.handleXSK(xsk, &stat, dataVec)
 		}
 	}
 
 	return nil
 }
 
-func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, stat *stats.Statistics) {
-	stuffFillQ(xsk)
-
-	var idx uint32
-	n := xsk.Rx.Peek(64, &idx)
+func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, stat *stats.Statistics, dataVec [][]byte) {
+	n := xsk.Readv(dataVec)
 	if n == 0 {
 		return
 	}
 
 	for i := uint32(0); i < n; i++ {
-		desc := xsk.Rx.GetDesc(idx)
-
-		stat.Bytes += uint64(desc.Len)
+		stat.Bytes += uint64(len(dataVec[i]))
 		stat.Packets++
 
 		for _, handle := range r.handles {
-			handle.HandlePacketData(xsk.Umem.GetData(desc))
+			handle.HandlePacketData(dataVec[i])
 		}
-		xsk.Umem.FreeFrame(desc.Addr)
 	}
-
-	xsk.Rx.Release(n)
 }
 
 func (r *Redirect) waitPoll() error {
@@ -277,19 +275,4 @@ func (r *Redirect) HandleReqData(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid redirect type: %s", req.RedirectType)
 	}
 	return handle.HandleReqData(req.RedirectData)
-}
-
-func stuffFillQ(x *xdp.XDPSocket) {
-	frames := x.Umem.Fill.GetFreeNum(x.Umem.GetFrameFreeNum())
-	if frames == 0 {
-		return
-	}
-
-	var idx uint32
-	x.Umem.Fill.Reserve(frames, &idx)
-
-	for i := uint32(0); i < frames; i++ {
-		*x.Umem.Fill.GetAddr(idx) = x.Umem.AllocFrame()
-	}
-	x.Umem.Fill.Submit(frames)
 }
