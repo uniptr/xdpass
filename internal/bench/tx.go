@@ -3,10 +3,11 @@ package bench
 import (
 	"net"
 	"syscall"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/zxhio/xdpass/pkg/netq"
+	"github.com/zxhio/xdpass/pkg/netutil"
 	"github.com/zxhio/xdpass/pkg/xdp"
 	"golang.org/x/sys/unix"
 )
@@ -20,13 +21,17 @@ type TxOpt struct {
 }
 
 type Tx interface {
+	Fd() int
+	QueueID() int
 	Transmit(*TxOpt)
 	Close() error
+	Stats() netutil.Statistics
 }
 
 type afpTx struct {
 	fd   int
 	addr unix.SockaddrLinklayer
+	stat netutil.Statistics
 }
 
 func newAFPTx(ifaceName string) (*afpTx, error) {
@@ -52,21 +57,30 @@ func newAFPTx(ifaceName string) (*afpTx, error) {
 	}, nil
 }
 
-func (r *afpTx) Transmit(b *TxOpt) {
+func (p *afpTx) Fd() int { return p.fd }
+
+func (p *afpTx) QueueID() int { return -1 }
+
+func (p *afpTx) Transmit(b *TxOpt) {
 	for i := uint32(0); i < b.Batch; i++ {
-		err := unix.Sendto(r.fd, b.Data, 0, &r.addr)
+		err := unix.Sendto(p.fd, b.Data, 0, &p.addr)
 		if err != nil {
-			b.stat.IOFailCount++
+			p.stat.TxErrors++
 		} else {
-			b.stat.Packets++
-			b.stat.Bytes += uint64(b.Batch)
+			p.stat.TxBytes += uint64(len(b.Data))
+			p.stat.TxPackets++
 		}
-		b.stat.IOCount++
+		p.stat.TxIOs++
 	}
 }
 
-func (r *afpTx) Close() error {
-	return unix.Close(r.fd)
+func (p *afpTx) Stats() netutil.Statistics {
+	p.stat.Timestamp = time.Now()
+	return p.stat
+}
+
+func (p *afpTx) Close() error {
+	return unix.Close(p.fd)
 }
 
 type xdpTx struct {
@@ -84,7 +98,7 @@ func newXDPTxList(ifaceName string, queueID int) ([]Tx, error) {
 		}
 		txList = append(txList, tx)
 	} else {
-		queues, err := netq.GetTxQueues(ifaceName)
+		queues, err := netutil.GetTxQueues(ifaceName)
 		if err != nil {
 			return nil, err
 		}
@@ -116,29 +130,30 @@ func newXDPTx(ifaceName string, queueId uint32) (*xdpTx, error) {
 	return &xdpTx{XDPSocket: s}, nil
 }
 
-func (b *xdpTx) Transmit(opt *TxOpt) {
-	if len(b.dataVec) < int(opt.Batch) {
-		b.dataVec = make([][]byte, opt.Batch)
+func (x *xdpTx) Fd() int {
+	return x.SocketFd()
+}
+
+func (x *xdpTx) QueueID() int {
+	return int(x.XDPSocket.QueueID())
+}
+
+func (x *xdpTx) Transmit(opt *TxOpt) {
+	if len(x.dataVec) < int(opt.Batch) {
+		x.dataVec = make([][]byte, opt.Batch)
 		for i := uint32(0); i < opt.Batch; i++ {
-			b.dataVec[i] = make([]byte, len(opt.Data))
-			copy(b.dataVec[i], opt.Data)
+			x.dataVec[i] = make([]byte, len(opt.Data))
+			copy(x.dataVec[i], opt.Data)
 		}
 	}
 
 	remain := opt.Batch
 	for remain > 0 {
-		n := b.Writev(b.dataVec)
-		if n == 0 {
-			opt.stat.IOFailCount++
-		} else {
-			opt.stat.Packets += uint64(n)
-			opt.stat.Bytes += uint64(n) * uint64(len(opt.Data))
-		}
-		opt.stat.IOCount++
+		n := x.Writev(x.dataVec)
 		remain -= n
 	}
 }
 
-func (b *xdpTx) Close() error {
-	return b.XDPSocket.Close()
+func (x *xdpTx) Close() error {
+	return x.XDPSocket.Close()
 }

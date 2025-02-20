@@ -1,4 +1,4 @@
-package netq
+package netutil
 
 import (
 	"fmt"

@@ -4,17 +4,20 @@ package bench
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"time"
 
+	"github.com/olekukonko/tablewriter"
 	"github.com/sirupsen/logrus"
-	"github.com/zxhio/xdpass/internal/stats"
+	"github.com/zxhio/xdpass/pkg/humanize"
+	"github.com/zxhio/xdpass/pkg/netutil"
 	"golang.org/x/sys/unix"
 )
 
 type BenchmarkOpt struct {
-	stat *stats.Statistics
 	done *bool
 }
 
@@ -65,12 +68,9 @@ func runTxBenchmark(ctx context.Context, opt *benchOpt, data []byte) error {
 	for _, c := range cores {
 		txGroups = append(txGroups, &txGroup{
 			TxOpt: TxOpt{
-				BenchmarkOpt: BenchmarkOpt{
-					stat: &stats.Statistics{},
-					done: &done,
-				},
-				Batch: batch,
-				Data:  data,
+				BenchmarkOpt: BenchmarkOpt{done: &done},
+				Batch:        batch,
+				Data:         data,
 			},
 			core: c,
 		})
@@ -86,16 +86,15 @@ func runTxBenchmark(ctx context.Context, opt *benchOpt, data []byte) error {
 	wg := sync.WaitGroup{}
 	wg.Add(len(cores))
 
-	var statsList []*stats.Statistics
 	for _, tg := range txGroups {
-		statsList = append(statsList, tg.stat)
 		go func() {
 			defer wg.Done()
 			runTxBenchmarkGroup(tg)
 		}()
 	}
+
 	if opt.statsDur > 0 {
-		go stats.DumpStatisticsListLoop(ctx, "TX:", statsList, time.Duration(opt.statsDur)*time.Second, logrus.Info)
+		go dumpStats(txList, time.Duration(opt.statsDur)*time.Second)
 	}
 
 	wg.Wait()
@@ -135,4 +134,42 @@ func setAffinityCPU(cpu int) error {
 	s.Zero()
 	s.Set(cpu)
 	return unix.SchedSetaffinity(0, &s)
+}
+
+func dumpStats(txList []Tx, dur time.Duration) {
+	prev := make(map[int]netutil.Statistics)
+	timer := time.NewTicker(dur)
+	for range timer.C {
+		tbl := tablewriter.NewWriter(os.Stdout)
+		tbl.SetHeader([]string{"fd", "queue", "tx_pps", "tx_bps", "tx_iops", "tx_error_ps"})
+
+		sum := netutil.StatisticsRate{}
+		for _, tx := range txList {
+			stat := tx.Stats()
+			rate := stat.Rate(prev[tx.Fd()])
+			prev[tx.Fd()] = stat
+
+			tbl.Append([]string{
+				fmt.Sprintf("%d", tx.Fd()),
+				fmt.Sprintf("%d", tx.QueueID()),
+				fmt.Sprintf("%.0f", rate.TxPPS),
+				humanize.BitsRate(int(rate.TxBPS)),
+				fmt.Sprintf("%.0f", rate.TxIOPS),
+				fmt.Sprintf("%.0f", rate.TxErrorPS),
+			})
+			sum.TxPPS += rate.TxPPS
+			sum.TxBPS += rate.TxBPS
+			sum.TxIOPS += rate.TxIOPS
+			sum.TxErrorPS += rate.TxErrorPS
+		}
+		tbl.Append([]string{
+			"",
+			"",
+			fmt.Sprintf("%.0f", sum.TxPPS),
+			humanize.BitsRate(int(sum.TxBPS)),
+			fmt.Sprintf("%.0f", sum.TxIOPS),
+			fmt.Sprintf("%.0f", sum.TxErrorPS),
+		})
+		tbl.Render()
+	}
 }

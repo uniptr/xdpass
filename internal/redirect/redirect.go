@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/cilium/ebpf/link"
+	"github.com/olekukonko/tablewriter"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
@@ -14,8 +17,8 @@ import (
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
-	"github.com/zxhio/xdpass/internal/stats"
-	"github.com/zxhio/xdpass/pkg/netq"
+	"github.com/zxhio/xdpass/pkg/humanize"
+	"github.com/zxhio/xdpass/pkg/netutil"
 	"github.com/zxhio/xdpass/pkg/utils"
 	"github.com/zxhio/xdpass/pkg/xdp"
 	"github.com/zxhio/xdpass/pkg/xdpprog"
@@ -101,7 +104,7 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 		logrus.WithFields(logrus.Fields{"id": info.ID, "type": info.Type, "prog": info.Program}).Info("Get xdp link info")
 	}
 
-	queues, err := netq.GetRxQueues(ifaceName)
+	queues, err := netutil.GetRxQueues(ifaceName)
 	if err != nil {
 		return nil, err
 	}
@@ -186,11 +189,7 @@ func (r *Redirect) setHandles(ifaceName string) error {
 }
 
 func (r *Redirect) Run(ctx context.Context) error {
-	var (
-		done bool
-		stat stats.Statistics
-	)
-
+	done := false
 	go func() {
 		<-ctx.Done()
 		done = true
@@ -198,6 +197,69 @@ func (r *Redirect) Run(ctx context.Context) error {
 
 	// Close in r.closers, not use ctx args
 	go r.server.Serve(context.Background())
+
+	// Test output
+	// TODO: response to xdpass stats
+	go func() {
+		prev := make(map[int]netutil.Statistics)
+
+		timer := time.NewTicker(time.Second * 3)
+		for range timer.C {
+			tbl := tablewriter.NewWriter(os.Stdout)
+			tbl.SetHeader([]string{"fd", "queue", "rx_pps", "tx_pps", "rx_bps", "tx_bps", "rx_iops", "tx_iops", "rx_error_ps", "tx_error_ps", "rx_dropped_ps", "tx_dropped_ps"})
+
+			sum := netutil.StatisticsRate{}
+			for _, xsk := range r.xsks {
+				stat := xsk.Stats()
+				rate := stat.Rate(prev[xsk.SocketFd()])
+				prev[xsk.SocketFd()] = stat
+
+				tbl.Append([]string{
+					fmt.Sprintf("%d", xsk.SocketFd()),
+					fmt.Sprintf("%d", xsk.QueueID()),
+					fmt.Sprintf("%.0f", rate.RxPPS),
+					fmt.Sprintf("%.0f", rate.TxPPS),
+					humanize.BitsRate(int(rate.RxBPS)),
+					humanize.BitsRate(int(rate.TxBPS)),
+					// fmt.Sprintf("%.0f", rate.RxBPS),
+					// fmt.Sprintf("%.0f", rate.TxBPS),
+					fmt.Sprintf("%.0f", rate.RxIOPS),
+					fmt.Sprintf("%.0f", rate.TxIOPS),
+					fmt.Sprintf("%.0f", rate.RxErrorPS),
+					fmt.Sprintf("%.0f", rate.TxErrorPS),
+					fmt.Sprintf("%.0f", rate.RxDroppedPS),
+					fmt.Sprintf("%.0f", rate.TxDroppedPS),
+				})
+				sum.RxPPS += rate.RxPPS
+				sum.TxPPS += rate.TxPPS
+				sum.RxBPS += rate.RxBPS
+				sum.TxBPS += rate.TxBPS
+				sum.RxIOPS += rate.RxIOPS
+				sum.TxIOPS += rate.TxIOPS
+				sum.RxErrorPS += rate.RxErrorPS
+				sum.TxErrorPS += rate.TxErrorPS
+				sum.RxDroppedPS += rate.RxDroppedPS
+				sum.TxDroppedPS += rate.TxDroppedPS
+			}
+			tbl.Append([]string{
+				"",
+				"",
+				fmt.Sprintf("%.0f", sum.RxPPS),
+				fmt.Sprintf("%.0f", sum.TxPPS),
+				humanize.BitsRate(int(sum.RxBPS)),
+				humanize.BitsRate(int(sum.TxBPS)),
+				// fmt.Sprintf("%.0f", sum.RxBPS),
+				// fmt.Sprintf("%.0f", sum.TxBPS),
+				fmt.Sprintf("%.0f", sum.RxIOPS),
+				fmt.Sprintf("%.0f", sum.TxIOPS),
+				fmt.Sprintf("%.0f", sum.RxErrorPS),
+				fmt.Sprintf("%.0f", sum.TxErrorPS),
+				fmt.Sprintf("%.0f", sum.RxDroppedPS),
+				fmt.Sprintf("%.0f", sum.TxDroppedPS),
+			})
+			tbl.Render()
+		}
+	}()
 
 	// TODO: use option vec size
 	dataVec := make([][]byte, 64)
@@ -212,23 +274,20 @@ func (r *Redirect) Run(ctx context.Context) error {
 		}
 
 		for _, xsk := range r.xsks {
-			r.handleXSK(xsk, &stat, dataVec)
+			r.handleXSK(xsk, dataVec)
 		}
 	}
 
 	return nil
 }
 
-func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, stat *stats.Statistics, dataVec [][]byte) {
+func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, dataVec [][]byte) {
 	n := xsk.Readv(dataVec)
 	if n == 0 {
 		return
 	}
 
 	for i := uint32(0); i < n; i++ {
-		stat.Bytes += uint64(len(dataVec[i]))
-		stat.Packets++
-
 		for _, handle := range r.handles {
 			handle.HandlePacketData(dataVec[i])
 		}

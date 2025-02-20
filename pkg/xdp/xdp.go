@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/zxhio/xdpass/pkg/netutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -99,6 +100,7 @@ type XDPSocket struct {
 
 	// for tx
 	standing uint32
+	stats    netutil.Statistics
 }
 
 // NewXDPSocket create a new xdp socket
@@ -216,10 +218,11 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 	umem.refCount++
 
 	return &XDPSocket{
-		sockfd: sockfd,
-		umem:   umem,
-		rx:     rx,
-		tx:     tx,
+		sockfd:  sockfd,
+		queueID: queueID,
+		umem:    umem,
+		rx:      rx,
+		tx:      tx,
 	}, nil
 }
 
@@ -241,24 +244,63 @@ func (x *XDPSocket) SocketFd() int { return x.sockfd }
 
 func (x *XDPSocket) QueueID() uint32 { return x.queueID }
 
+// Stats returns the statistics copy of the socket
+func (x *XDPSocket) Stats() netutil.Statistics {
+	x.stats.Timestamp = time.Now()
+	return x.stats
+}
+
 // Peek at RX non-blockingly and copy data to vec
-func (x *XDPSocket) Readv(vec [][]byte) uint32 {
+// Return iovec read count
+func (x *XDPSocket) Readv(iovs [][]byte) uint32 {
 	x.stuffFillQ()
 
 	var idx uint32
-	n := x.rx.Peek(uint32(len(vec)), &idx)
+	n := x.rx.Peek(uint32(len(iovs)), &idx)
 	if n == 0 {
 		return 0
 	}
 
+	x.stats.RxIOs++
 	for i := uint32(0); i < n; i++ {
 		desc := x.rx.GetDesc(idx + i)
-		copy(vec[i], x.umem.GetData(desc))
+		copy(iovs[i], x.umem.GetData(desc))
 		x.umem.FreeFrame(desc.Addr)
+
+		x.stats.RxPackets++
+		x.stats.RxBytes += uint64(desc.Len)
 	}
 	x.rx.Release(n)
 
 	return n
+}
+
+// Reserve non-blockingly and copy data to TX
+// Return iovec written count
+func (x *XDPSocket) Writev(iovs [][]byte) uint32 {
+	idx := uint32(0)
+	batch := uint32(len(iovs))
+
+	if x.tx.Reserve(batch, &idx) < batch {
+		x.complete()
+		return 0
+	}
+
+	for i := uint32(0); i < batch; i++ {
+		desc := x.tx.GetDesc(idx + i)
+		desc.Len = uint32(len(iovs[i]))
+		desc.Addr = x.umem.AllocFrame()
+		copy(x.umem.GetData(desc), iovs[i])
+
+		x.stats.TxPackets++
+		x.stats.TxBytes += uint64(desc.Len)
+	}
+
+	x.standing += batch
+	x.tx.Submit(batch)
+	x.complete()
+
+	return batch
 }
 
 func (x *XDPSocket) stuffFillQ() {
@@ -276,30 +318,6 @@ func (x *XDPSocket) stuffFillQ() {
 	x.umem.Fill.Submit(frames)
 }
 
-// Reserve non-blockingly and copy data to TX
-// Return the vec written
-func (x *XDPSocket) Writev(vec [][]byte) uint32 {
-	idx := uint32(0)
-	batch := uint32(len(vec))
-
-	if x.tx.Reserve(batch, &idx) < batch {
-		x.complete()
-		return 0
-	}
-
-	for i := uint32(0); i < batch; i++ {
-		desc := x.tx.GetDesc(idx + i)
-		desc.Len = uint32(len(vec[i]))
-		desc.Addr = x.umem.AllocFrame()
-		copy(x.umem.GetData(desc), vec[i])
-	}
-
-	x.standing += batch
-	x.tx.Submit(batch)
-	x.complete()
-	return batch
-}
-
 func (x *XDPSocket) complete() {
 	if x.standing == 0 {
 		return
@@ -307,8 +325,9 @@ func (x *XDPSocket) complete() {
 
 	err := unix.Sendto(x.sockfd, nil, unix.MSG_DONTWAIT, nil)
 	if err != nil {
-		// TODO: add statistic
+		x.stats.TxErrors++
 	}
+	x.stats.TxIOs++
 
 	var (
 		idx       uint32
@@ -319,7 +338,6 @@ func (x *XDPSocket) complete() {
 		return
 	}
 	for i := uint32(0); i < completed; i++ {
-		// TODO: add pkts statistic
 		x.umem.FreeFrame(*x.umem.Comp.GetAddr(idx + i))
 	}
 	x.umem.Comp.Release(completed)
@@ -327,10 +345,11 @@ func (x *XDPSocket) complete() {
 }
 
 func (x *XDPSocket) completeAll() {
-	// TODO: limit call count
-	for x.standing != 0 {
+	retries := max(x.standing/64, 1)
+	for x.standing != 0 && retries > 0 {
 		x.complete()
 		time.Sleep(time.Millisecond * 10)
+		retries--
 	}
 }
 
