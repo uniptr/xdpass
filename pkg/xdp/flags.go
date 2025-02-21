@@ -1,6 +1,7 @@
 package xdp
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"golang.org/x/sys/unix"
@@ -49,40 +50,54 @@ func (m *XDPAttachMode) Set(s string) error {
 	return nil
 }
 
-type XSKBindFlags int
+func (m XDPAttachMode) MarshalJSON() ([]byte, error) {
+	return json.Marshal(m.String())
+}
+
+func (m *XDPAttachMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	return m.Set(s)
+}
+
+type XSKBindFlags uint16
 
 const (
+	XSKBindFlagsUnspec     XSKBindFlags = 0
 	XSKBindFlagsCopy       XSKBindFlags = unix.XDP_COPY
 	XSKBindFlagsZeroCopy   XSKBindFlags = unix.XDP_ZEROCOPY
 	XSKBindFlagsNeedWakeup XSKBindFlags = unix.XDP_USE_NEED_WAKEUP
-
-	// _XSKBindFlagsSharedUmem is not exported directly.
-	_XSKBindFlagsSharedUmem XSKBindFlags = unix.XDP_SHARED_UMEM
 )
 
 const (
-	XSKBindFlagsStrCopy        = "copy"
-	XSKBindFlagsStrZeroCopy    = "zero-copy"
-	XSKBindFlagsStrNeedWakeup  = "use-need-wakeup"
-	_XSKBindFlagsStrSharedUmem = "shared-umem"
+	XSKBindFlagsStrUnspec     = ""
+	XSKBindFlagsStrCopy       = "copy"
+	XSKBindFlagsStrZeroCopy   = "zero-copy"
+	XSKBindFlagsStrNeedWakeup = "use-need-wakeup"
 )
 
 var bindFlagsLookup = map[string]XSKBindFlags{
-	XSKBindFlagsStrCopy:        XSKBindFlagsCopy,
-	XSKBindFlagsStrZeroCopy:    XSKBindFlagsZeroCopy,
-	XSKBindFlagsStrNeedWakeup:  XSKBindFlagsNeedWakeup,
-	_XSKBindFlagsStrSharedUmem: _XSKBindFlagsSharedUmem,
+	XSKBindFlagsStrUnspec:     XSKBindFlagsUnspec,
+	XSKBindFlagsStrCopy:       XSKBindFlagsCopy,
+	XSKBindFlagsStrZeroCopy:   XSKBindFlagsZeroCopy,
+	XSKBindFlagsStrNeedWakeup: XSKBindFlagsNeedWakeup,
 }
 
 var bindFlagsStrLookup = map[XSKBindFlags]string{
-	XSKBindFlagsCopy:        XSKBindFlagsStrCopy,
-	XSKBindFlagsZeroCopy:    XSKBindFlagsStrZeroCopy,
-	XSKBindFlagsNeedWakeup:  XSKBindFlagsStrNeedWakeup,
-	_XSKBindFlagsSharedUmem: _XSKBindFlagsStrSharedUmem,
+	XSKBindFlagsUnspec:     XSKBindFlagsStrUnspec,
+	XSKBindFlagsCopy:       XSKBindFlagsStrCopy,
+	XSKBindFlagsZeroCopy:   XSKBindFlagsStrZeroCopy,
+	XSKBindFlagsNeedWakeup: XSKBindFlagsStrNeedWakeup,
 }
 
 func (f XSKBindFlags) String() string {
-	return bindFlagsStrLookup[f]
+	s, ok := bindFlagsStrLookup[f]
+	if !ok {
+		return "<invalid-flags>"
+	}
+	return s
 }
 
 func (f *XSKBindFlags) Set(s string) error {
@@ -92,4 +107,20 @@ func (f *XSKBindFlags) Set(s string) error {
 	}
 	*f = flag
 	return nil
+}
+
+func (f XSKBindFlags) MarshalJSON() ([]byte, error) {
+	s, ok := bindFlagsStrLookup[f]
+	if !ok {
+		return nil, fmt.Errorf("invalid xsk bind flag: %d", f)
+	}
+	return json.Marshal(s)
+}
+
+func (f *XSKBindFlags) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	return f.Set(s)
 }
