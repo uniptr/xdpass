@@ -11,7 +11,7 @@ num_ns=4
 add_netns() {
     netns_name=ns$1
     ip netns add $netns_name
-    ip link add veth$1 numrxqueues $num_rx numtxqueues $num_tx type veth peer name eth0 netns $netns_name
+    ip link add veth$1 numrxqueues $num_rx numtxqueues $num_tx type veth peer name eth0 numrxqueues $num_rx numtxqueues $num_tx netns $netns_name
     ip link set veth$1 up
     ip link set veth$1 master br1
     ip netns exec $netns_name ip link set lo up
