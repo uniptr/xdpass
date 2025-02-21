@@ -2,9 +2,7 @@ package bench
 
 import (
 	"context"
-	"encoding/hex"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/zxhio/xdpass/internal/commands"
 )
@@ -18,6 +16,8 @@ type benchOpt struct {
 	rateLimitPrec rateLimitPrecision
 	cores         []int
 	statsDur      uint
+	bindCopy      bool
+	bindZeroCopy  bool
 	layerOpt
 }
 
@@ -35,11 +35,12 @@ var tcp = &cobra.Command{
 	Use:   "tcp",
 	Short: "Transmit TCP packets",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		commands.SetVerbose()
+
 		data, err := makePacketData(opt.ifaceName, &opt.layerOpt, l4MakerTCP{})
 		if err != nil {
 			return err
 		}
-		logrus.Infof("Packet hexdump %d bytes:\n%v", len(data), hex.Dump(data))
 		return runTxBenchmark(context.Background(), &opt, data)
 	},
 }
@@ -48,11 +49,12 @@ var icmpv4 = &cobra.Command{
 	Use:   "icmp",
 	Short: "Transmit ICMPv4 echo request packets",
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		commands.SetVerbose()
+
 		data, err := makePacketData(opt.ifaceName, &opt.layerOpt, l4MakerICMPv4{})
 		if err != nil {
 			return err
 		}
-		logrus.Infof("Packet hexdump %d bytes:\n%v", len(data), hex.Dump(data))
 		return runTxBenchmark(context.Background(), &opt, data)
 	},
 }
@@ -61,24 +63,27 @@ var udp = &cobra.Command{
 	Use:   "udp",
 	Short: "Transmit UDP packets",
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		commands.SetVerbose()
+
 		data, err := makePacketData(opt.ifaceName, &opt.layerOpt, l4MakerUDP{})
 		if err != nil {
 			return err
 		}
-		logrus.Infof("Packet hexdump %d bytes:\n%v", len(data), hex.Dump(data))
 		return runTxBenchmark(context.Background(), &opt, data)
 	},
 }
 
 func init() {
 	commands.SetFlagsInterface(benchCmd.PersistentFlags(), &opt.ifaceName)
-	benchCmd.PersistentFlags().IntVarP(&opt.queueID, "queue-id", "q", -1, "Interface queue id, -1 all queue id")
-	benchCmd.PersistentFlags().IntVarP(&opt.n, "total", "n", 1, "Transmit packet total")
-	benchCmd.PersistentFlags().Uint32Var(&opt.batch, "batch", 64, "Transmit packet batch size")
-	benchCmd.PersistentFlags().IntVar(&opt.rateLimit, "rate-limit", 1, "Packet send rate limit (s), -1 not limit")
-	benchCmd.PersistentFlags().Var(&opt.rateLimitPrec, "rate-limit-prec", "Packet send rate limit precision, low|mid|high")
+	benchCmd.PersistentFlags().IntVarP(&opt.queueID, "queue-id", "q", -1, "Interface queue id, -1 all queues")
+	benchCmd.PersistentFlags().BoolVar(&opt.bindCopy, "xdp-copy", false, "Force copy mode")
+	benchCmd.PersistentFlags().BoolVar(&opt.bindZeroCopy, "xdp-zero-copy", false, "Force zero copy mode")
+	benchCmd.PersistentFlags().IntVarP(&opt.n, "total", "n", -1, "Transmit packet total, -1 unlimited")
+	benchCmd.PersistentFlags().Uint32VarP(&opt.batch, "batch", "b", 64, "Transmit packet batch size")
+	benchCmd.PersistentFlags().IntVarP(&opt.rateLimit, "rate-limit", "r", -1, "Packet send rate limit (s), -1 unlimited")
+	benchCmd.PersistentFlags().VarP(&opt.rateLimitPrec, "rate-limit-prec", "p", "Packet send rate limit precision, low|mid|high")
 	benchCmd.PersistentFlags().UintVarP(&opt.statsDur, "stats-dur", "s", 0, "Statistics output duration (s)")
-	benchCmd.PersistentFlags().IntSliceVar(&opt.cores, "cpu", []int{-1}, "Affinity cpu cores, -1 not set")
+	benchCmd.PersistentFlags().IntSliceVarP(&opt.cores, "cores", "c", []int{-1}, "Affinity cpu cores, -1 not set, cores must <= queues")
 
 	// L2
 	benchCmd.PersistentFlags().StringVar(&opt.SrcMACStr, "src-mac", "", "MAC source address")

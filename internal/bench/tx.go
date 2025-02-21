@@ -44,7 +44,7 @@ func newAFPTx(ifaceName string) (*afpTx, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "unix.Socket")
 	}
-	logrus.WithField("fd", fd).Info("New raw socket")
+	logrus.WithField("fd", fd).Debug("New raw socket")
 
 	return &afpTx{
 		fd: fd,
@@ -85,47 +85,21 @@ func (p *afpTx) Close() error {
 
 type xdpTx struct {
 	*xdp.XDPSocket
-	// standing uint32
 	dataVec [][]byte
 }
 
-func newXDPTxList(ifaceName string, queueID int) ([]Tx, error) {
-	var txList []Tx
-	if queueID != -1 {
-		tx, err := newXDPTx(ifaceName, uint32(queueID))
-		if err != nil {
-			return nil, err
-		}
-		txList = append(txList, tx)
-	} else {
-		queues, err := netutil.GetTxQueues(ifaceName)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, id := range queues {
-			tx, err := newXDPTx(ifaceName, uint32(id))
-			if err != nil {
-				return nil, err
-			}
-			txList = append(txList, tx)
-		}
-	}
-	return txList, nil
-}
-
-func newXDPTx(ifaceName string, queueId uint32) (*xdpTx, error) {
+func newXDPTx(ifaceName string, queueID uint32, opts ...xdp.XDPOpt) (*xdpTx, error) {
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
 		return nil, errors.Wrap(err, "net.InterfaceByName")
 	}
 
 	// For compatibility reasons, use SKB mode.
-	s, err := xdp.NewXDPSocket(uint32(iface.Index), queueId)
+	s, err := xdp.NewXDPSocket(uint32(iface.Index), queueID, opts...)
 	if err != nil {
 		return nil, err
 	}
-	logrus.WithFields(logrus.Fields{"fd": s.SocketFD(), "queue_id": queueId}).Info("New xdp socket")
+	logrus.WithFields(logrus.Fields{"fd": s.SocketFD(), "queue_id": queueID}).Debug("New xdp socket")
 
 	return &xdpTx{XDPSocket: s}, nil
 }

@@ -276,8 +276,12 @@ func getDstMAC(link netlink.Link, dstMacStr string, dstIP net.IP) (net.HardwareA
 
 func valueOr[T comparable](v T, def T) T {
 	var vv T
-	if vv == v {
-		return def
+	return valueExpect(v == vv, def, v)
+}
+
+func valueExpect[T any](expect bool, expectV, notExpectV T) T {
+	if expect {
+		return expectV
 	}
-	return v
+	return notExpectV
 }

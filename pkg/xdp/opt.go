@@ -90,6 +90,10 @@ func WithNoNeedWakeup() XDPOpt {
 }
 
 // XSK bind flags XDP_COPY
+// Note:
+//
+//	Some drivers require specifying the use of copy mode to consume TX data.
+//	Similarly, these drivers may only support loading XDP programs in generic mode.
 func WithCopy() XDPOpt {
 	return func(o *xdpOpts) {
 		o.BindFlags |= XSKBindFlags(unix.XDP_COPY)
