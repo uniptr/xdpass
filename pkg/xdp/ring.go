@@ -56,6 +56,10 @@ func (q *prodQ[T]) Submit(n uint32) {
 	atomic.StoreUint32(q.producer, *q.producer+n)
 }
 
+func (q *prodQ[T]) NeedWakeup() bool {
+	return *q.flags&unix.XDP_RING_NEED_WAKEUP != 0
+}
+
 // Consumer queue
 type consQ[T any] queue[T]
 

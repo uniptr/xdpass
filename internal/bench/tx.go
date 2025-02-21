@@ -121,17 +121,17 @@ func newXDPTx(ifaceName string, queueId uint32) (*xdpTx, error) {
 	}
 
 	// For compatibility reasons, use SKB mode.
-	s, err := xdp.NewXDPSocket(uint32(iface.Index), queueId, xdp.WithXDPBindFlags(unix.XDP_FLAGS_SKB_MODE))
+	s, err := xdp.NewXDPSocket(uint32(iface.Index), queueId)
 	if err != nil {
 		return nil, err
 	}
-	logrus.WithFields(logrus.Fields{"fd": s.SocketFd(), "queue_id": queueId}).Info("New xdp socket")
+	logrus.WithFields(logrus.Fields{"fd": s.SocketFD(), "queue_id": queueId}).Info("New xdp socket")
 
 	return &xdpTx{XDPSocket: s}, nil
 }
 
 func (x *xdpTx) Fd() int {
-	return x.SocketFd()
+	return x.SocketFD()
 }
 
 func (x *xdpTx) QueueID() int {

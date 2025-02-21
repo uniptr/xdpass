@@ -31,13 +31,15 @@ func NewXDPUmem(sockfd int, opts ...XDPOpt) (*XDPUmem, error) {
 		return nil, fmt.Errorf("invalid size of frame %d: must be either 2048 or 4096", o.FrameSize)
 	}
 	if bits.OnesCount32(o.FrameNum) != 1 {
-		return nil, wrapPowerOf2Error(o.FrameNum, "invalid number of frame")
+		return nil, wrapPowerOf2Error(o.FrameNum, "frame number")
 	}
+	// Fill/Comp ring both must exist
+	// See kernel net/xdp/xsk.c *xsk_bind* and *xsk_validate_queues*
 	if bits.OnesCount32(o.FillSize) != 1 {
-		return nil, wrapPowerOf2Error(o.FillSize, "invalid size of fill ring")
+		return nil, wrapPowerOf2Error(o.FillSize, "fill ring")
 	}
 	if bits.OnesCount32(o.CompSize) != 1 {
-		return nil, wrapPowerOf2Error(o.CompSize, "invalid size of compeletion ring")
+		return nil, wrapPowerOf2Error(o.CompSize, "completion ring")
 	}
 
 	area, err := unix.Mmap(-1, 0, int(o.FrameNum*o.FrameSize),

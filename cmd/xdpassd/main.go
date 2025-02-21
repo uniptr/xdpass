@@ -29,8 +29,9 @@ type attachModeOpt struct {
 }
 
 type bindFlagsOpt struct {
-	bindFlagsXSKCopy     bool
-	bindFlagsXSKZeroCopy bool
+	bindFlagsXSKCopy      bool
+	bindFlagsXSKZeroCopy  bool
+	bindFlagsNoNeedWakeup bool
 }
 
 func main() {
@@ -47,7 +48,7 @@ func main() {
 	// bind flags
 	pflag.BoolVar(&opt.bindFlagsXSKCopy, xdp.XSKBindFlagsStrCopy, false, "Force copy mode")
 	pflag.BoolVar(&opt.bindFlagsXSKZeroCopy, xdp.XSKBindFlagsStrZeroCopy, false, "Force zero-copy mode")
-
+	pflag.BoolVar(&opt.bindFlagsNoNeedWakeup, "no-need-wakeup", false, "Disable need wakeup flag")
 	pflag.Parse()
 
 	if opt.verbose {
@@ -65,28 +66,26 @@ func main() {
 		logrus.WithField("sig", sig).Info("Recv signal")
 	}()
 
-	var (
-		attachMode xdp.XDPAttachMode
-		bindFlags  xdp.XSKBindFlags
-	)
-
-	if opt.attachModeGeneric {
-		attachMode = xdp.XDPAttachModeGeneric
-	} else if opt.attachModeNative {
+	attachMode := xdp.XDPAttachModeGeneric
+	if opt.attachModeNative {
 		attachMode = xdp.XDPAttachModeNative
 	} else if opt.attachModeOffload {
 		attachMode = xdp.XDPAttachModeOffload
 	}
 
+	xdpOpts := []xdp.XDPOpt{}
 	if opt.bindFlagsXSKCopy {
-		bindFlags = xdp.XSKBindFlagsCopy
+		xdpOpts = append(xdpOpts, xdp.WithCopy())
 	} else if opt.bindFlagsXSKZeroCopy {
-		bindFlags = xdp.XSKBindFlagsZeroCopy
+		xdpOpts = append(xdpOpts, xdp.WithZeroCopy())
+	}
+	if opt.bindFlagsNoNeedWakeup {
+		xdpOpts = append(xdpOpts, xdp.WithNoNeedWakeup())
 	}
 
 	rx, err := redirect.NewRedirect(opt.ifaceName,
 		redirect.WithRedirectQueueID(opt.queueID),
-		redirect.WithRedirectXDPFlags(attachMode, bindFlags),
+		redirect.WithRedirectXDPFlags(attachMode, xdpOpts...),
 		redirect.WithRedirectPollTimeout(opt.pollTimeout),
 	)
 	if err != nil {

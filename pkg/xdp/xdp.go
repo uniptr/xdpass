@@ -22,74 +22,6 @@ const (
 	INVALID_UMEM_FRAME = math.MaxUint64
 )
 
-type xdpOpts struct {
-	// Umem opts
-	FillSize      uint32
-	CompSize      uint32
-	FrameNum      uint32
-	FrameSize     uint32
-	FrameHeadRoom uint32
-	UmemFlags     uint32
-
-	// Shared umem
-	sharedUmemPtr **XDPUmem
-
-	// Rx/Tx opts
-	RxSize uint32
-	TxSize uint32
-
-	// Flags
-	BindFlags XSKBindFlags
-}
-
-func XDPDefaultOpts() xdpOpts {
-	return xdpOpts{
-		FillSize:      ProdRingDefaultDescs,
-		CompSize:      ConsRingDefaultDescs,
-		FrameNum:      UmemDefaultFrameNum,
-		FrameSize:     UmemDefaultFrameSize,
-		FrameHeadRoom: UmemDefaultFrameHeadroom,
-		RxSize:        ConsRingDefaultDescs,
-		TxSize:        ProdRingDefaultDescs,
-	}
-}
-
-type XDPOpt func(*xdpOpts)
-
-func WithXDPUmemRing(fillSize, compSize uint32) XDPOpt {
-	return func(o *xdpOpts) {
-		o.FillSize = fillSize
-		o.CompSize = compSize
-	}
-}
-
-func WithXDPUmemFrame(frameNum, frameSize, frameHeadRoom uint32) XDPOpt {
-	return func(o *xdpOpts) {
-		o.FrameNum = frameNum
-		o.FrameSize = frameSize
-		o.FrameHeadRoom = frameHeadRoom
-	}
-}
-
-func WithXDPUmemFlags(umemFlags uint32) XDPOpt {
-	return func(o *xdpOpts) { o.UmemFlags = umemFlags }
-}
-
-func WithXDPSharedUmem(umem **XDPUmem) XDPOpt {
-	return func(o *xdpOpts) { o.sharedUmemPtr = umem }
-}
-
-func WithXDPRxTx(rxSize, txSize uint32) XDPOpt {
-	return func(o *xdpOpts) {
-		o.RxSize = rxSize
-		o.TxSize = txSize
-	}
-}
-
-func WithXDPBindFlags(bindFlags XSKBindFlags) XDPOpt {
-	return func(o *xdpOpts) { o.BindFlags = bindFlags }
-}
-
 type XDPSocket struct {
 	sockfd  int
 	queueID uint32
@@ -125,14 +57,24 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 	}
 
 	// Check Rx/Tx ring size, allow use one ring.
-	if bits.OnesCount32(o.RxSize) != 1 && o.RxSize != 0 {
-		return nil, wrapPowerOf2Error(o.RxSize, "invalid size of rx ring")
-	}
-	if bits.OnesCount32(o.TxSize) != 1 && o.TxSize != 0 {
-		return nil, wrapPowerOf2Error(o.TxSize, "invalid size of tx ring")
-	}
 	if o.RxSize == 0 && o.TxSize == 0 {
 		return nil, errors.New("invalid size, both rx/tx rings are 0")
+	}
+	if o.RxSize > 0 {
+		if bits.OnesCount32(o.RxSize) != 1 {
+			return nil, wrapPowerOf2Error(o.RxSize, "rx ring")
+		}
+		if o.FillSize == 0 {
+			return nil, errors.New("invalid size 0 of fill ring when rx ring is not 0")
+		}
+	}
+	if o.TxSize > 0 {
+		if bits.OnesCount32(o.TxSize) != 1 {
+			return nil, wrapPowerOf2Error(o.TxSize, "tx ring")
+		}
+		if o.CompSize == 0 {
+			return nil, errors.New("invalid size 0 of completion ring when tx ring is not 0")
+		}
 	}
 
 	sockfd, err := unix.Socket(unix.AF_XDP, unix.SOCK_RAW, 0)
@@ -210,7 +152,6 @@ func NewXDPSocket(ifIndex, queueID uint32, opts ...XDPOpt) (*XDPSocket, error) {
 	} else {
 		addr.Flags = uint16(o.BindFlags)
 	}
-
 	err = unix.Bind(sockfd, addr)
 	if err != nil {
 		return nil, errors.Wrap(err, "unix.Bind")
@@ -240,7 +181,7 @@ func (x *XDPSocket) Close() error {
 	return nil
 }
 
-func (x *XDPSocket) SocketFd() int { return x.sockfd }
+func (x *XDPSocket) SocketFD() int { return x.sockfd }
 
 func (x *XDPSocket) QueueID() uint32 { return x.queueID }
 
@@ -323,11 +264,13 @@ func (x *XDPSocket) complete() {
 		return
 	}
 
-	err := unix.Sendto(x.sockfd, nil, unix.MSG_DONTWAIT, nil)
-	if err != nil {
-		x.stats.TxErrors++
+	if x.tx.NeedWakeup() {
+		err := unix.Sendto(x.sockfd, nil, unix.MSG_DONTWAIT, nil)
+		if err != nil && !isExpectedErrno(err.(unix.Errno)) {
+			x.stats.TxErrors++
+		}
+		x.stats.TxIOs++
 	}
-	x.stats.TxIOs++
 
 	var (
 		idx       uint32
@@ -353,6 +296,11 @@ func (x *XDPSocket) completeAll() {
 	}
 }
 
-func wrapPowerOf2Error(n uint32, msg string) error {
-	return errors.Errorf("invalid %s %d, must be a power of 2", msg, n)
+func wrapPowerOf2Error(n uint32, name string) error {
+	return errors.Errorf("invalid size(%d) of %s, must be a power of 2", n, name)
+}
+
+func isExpectedErrno(errno unix.Errno) bool {
+	return errno == unix.ENOBUFS || errno == unix.EAGAIN ||
+		errno == unix.EBUSY || errno == unix.ENETDOWN
 }
