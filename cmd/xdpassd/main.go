@@ -17,7 +17,7 @@ var opt struct {
 	queueID     int
 	pollTimeout int
 	verbose     bool
-
+	cores       []int
 	attachModeOpt
 	bindFlagsOpt
 }
@@ -38,6 +38,7 @@ func main() {
 	pflag.StringVarP(&opt.ifaceName, "interface", "i", "", "Interface name")
 	pflag.IntVarP(&opt.queueID, "queue-id", "q", 0, "Interface rx queue index")
 	pflag.IntVar(&opt.pollTimeout, "poll", 0, "Poll timeout (us), 0 means not use poll")
+	pflag.IntSliceVarP(&opt.cores, "cores", "c", []int{-1}, "Affinity cpu cores, -1 not set, cores must <= queues")
 	pflag.BoolVarP(&opt.verbose, "verbose", "v", false, "Verbose output")
 
 	// attach mode
@@ -87,6 +88,7 @@ func main() {
 		redirect.WithRedirectQueueID(opt.queueID),
 		redirect.WithRedirectXDPFlags(attachMode, xdpOpts...),
 		redirect.WithRedirectPollTimeout(opt.pollTimeout),
+		redirect.WithRedirectCores(opt.cores),
 	)
 	if err != nil {
 		logrus.WithError(err).Fatal("Fatal to new packet rx")

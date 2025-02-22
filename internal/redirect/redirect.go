@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/cilium/ebpf/link"
@@ -30,6 +32,7 @@ type redirectOpts struct {
 	attachMode  xdp.XDPAttachMode
 	xdpOpts     []xdp.XDPOpt
 	pollTimeout int
+	cores       []int
 }
 
 type RedirectOpt func(*redirectOpts)
@@ -47,6 +50,10 @@ func WithRedirectXDPFlags(attachMode xdp.XDPAttachMode, opts ...xdp.XDPOpt) Redi
 
 func WithRedirectPollTimeout(timeout int) RedirectOpt {
 	return func(o *redirectOpts) { o.pollTimeout = timeout }
+}
+
+func WithRedirectCores(cores []int) RedirectOpt {
+	return func(o *redirectOpts) { o.cores = cores }
 }
 
 type Redirect struct {
@@ -187,6 +194,11 @@ func (r *Redirect) setHandles(ifaceName string) error {
 	return nil
 }
 
+type xskGroup struct {
+	xsks []*xdp.XDPSocket
+	core int
+}
+
 func (r *Redirect) Run(ctx context.Context) error {
 	done := false
 	go func() {
@@ -199,83 +211,52 @@ func (r *Redirect) Run(ctx context.Context) error {
 
 	// Test output
 	// TODO: response to xdpass stats
-	go func() {
-		prev := make(map[int]netutil.Statistics)
+	go r.dumpStats()
 
-		timer := time.NewTicker(time.Second * 3)
-		for range timer.C {
-			tbl := tablewriter.NewWriter(os.Stdout)
-			tbl.SetHeader([]string{"fd", "queue", "rx_pps", "tx_pps", "rx_bps", "tx_bps", "rx_iops", "tx_iops", "rx_error_ps", "tx_error_ps", "rx_dropped_ps", "tx_dropped_ps"})
+	var xskGroups []*xskGroup
+	cores := r.cores[:min(len(r.xsks), len(r.cores))]
+	for _, core := range cores {
+		xskGroups = append(xskGroups, &xskGroup{core: core})
+	}
+	for k, xsk := range r.xsks {
+		xskGroups[k%len(xskGroups)].xsks = append(xskGroups[k%len(xskGroups)].xsks, xsk)
+	}
 
-			sum := netutil.StatisticsRate{}
-			for _, xsk := range r.xsks {
-				stat := xsk.Stats()
-				rate := stat.Rate(prev[xsk.SocketFD()])
-				prev[xsk.SocketFD()] = stat
+	wg := sync.WaitGroup{}
+	wg.Add(len(xskGroups))
 
-				tbl.Append([]string{
-					fmt.Sprintf("%d", xsk.SocketFD()),
-					fmt.Sprintf("%d", xsk.QueueID()),
-					fmt.Sprintf("%.0f", rate.RxPPS),
-					fmt.Sprintf("%.0f", rate.TxPPS),
-					humanize.BitsRate(int(rate.RxBPS)),
-					humanize.BitsRate(int(rate.TxBPS)),
-					// fmt.Sprintf("%.0f", rate.RxBPS),
-					// fmt.Sprintf("%.0f", rate.TxBPS),
-					fmt.Sprintf("%.0f", rate.RxIOPS),
-					fmt.Sprintf("%.0f", rate.TxIOPS),
-					fmt.Sprintf("%.0f", rate.RxErrorPS),
-					fmt.Sprintf("%.0f", rate.TxErrorPS),
-					fmt.Sprintf("%.0f", rate.RxDroppedPS),
-					fmt.Sprintf("%.0f", rate.TxDroppedPS),
-				})
-				sum.RxPPS += rate.RxPPS
-				sum.TxPPS += rate.TxPPS
-				sum.RxBPS += rate.RxBPS
-				sum.TxBPS += rate.TxBPS
-				sum.RxIOPS += rate.RxIOPS
-				sum.TxIOPS += rate.TxIOPS
-				sum.RxErrorPS += rate.RxErrorPS
-				sum.TxErrorPS += rate.TxErrorPS
-				sum.RxDroppedPS += rate.RxDroppedPS
-				sum.TxDroppedPS += rate.TxDroppedPS
+	for _, xg := range xskGroups {
+		go func(g *xskGroup) {
+			defer wg.Done()
+
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+
+			l := logrus.WithField("tid", unix.Gettid())
+			if g.core != -1 {
+				setAffinityCPU(g.core)
+				l = l.WithField("affinity_core", g.core)
 			}
-			tbl.Append([]string{
-				"",
-				"",
-				fmt.Sprintf("%.0f", sum.RxPPS),
-				fmt.Sprintf("%.0f", sum.TxPPS),
-				humanize.BitsRate(int(sum.RxBPS)),
-				humanize.BitsRate(int(sum.TxBPS)),
-				// fmt.Sprintf("%.0f", sum.RxBPS),
-				// fmt.Sprintf("%.0f", sum.TxBPS),
-				fmt.Sprintf("%.0f", sum.RxIOPS),
-				fmt.Sprintf("%.0f", sum.TxIOPS),
-				fmt.Sprintf("%.0f", sum.RxErrorPS),
-				fmt.Sprintf("%.0f", sum.TxErrorPS),
-				fmt.Sprintf("%.0f", sum.RxDroppedPS),
-				fmt.Sprintf("%.0f", sum.TxDroppedPS),
-			})
-			tbl.Render()
-		}
-	}()
+			l.Info("Start xsk group")
 
-	// TODO: use option vec size
-	dataVec := make([][]byte, 64)
-	for i := range dataVec {
-		dataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
+			// TODO: use option vec size
+			dataVec := make([][]byte, 64)
+			for i := range dataVec {
+				dataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
+			}
+
+			for !done {
+				err := r.waitPoll()
+				if err != nil {
+					continue
+				}
+				for _, xsk := range g.xsks {
+					r.handleXSK(xsk, dataVec)
+				}
+			}
+		}(xg)
 	}
-
-	for !done {
-		err := r.waitPoll()
-		if err != nil {
-			return err
-		}
-
-		for _, xsk := range r.xsks {
-			r.handleXSK(xsk, dataVec)
-		}
-	}
+	wg.Wait()
 
 	return nil
 }
@@ -333,4 +314,61 @@ func (r *Redirect) HandleReqData(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid redirect type: %s", req.RedirectType)
 	}
 	return handle.HandleReqData(req.RedirectData)
+}
+
+func (r *Redirect) dumpStats() {
+	prev := make(map[int]netutil.Statistics)
+
+	timer := time.NewTicker(time.Second * 3)
+	for range timer.C {
+		tbl := tablewriter.NewWriter(os.Stdout)
+		tbl.SetHeader([]string{"queue", "rx_pkts", "rx_pps", "rx_bytes", "rx_bps", "rx_iops", "rx_err_iops"})
+		tbl.SetAlignment(tablewriter.ALIGN_RIGHT)
+		tbl.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
+
+		sum := struct {
+			netutil.Statistics
+			netutil.StatisticsRate
+		}{}
+		for _, xsk := range r.xsks {
+			stat := xsk.Stats()
+			rate := stat.Rate(prev[xsk.SocketFD()])
+			prev[xsk.SocketFD()] = stat
+
+			tbl.Append([]string{
+				fmt.Sprintf("%d", xsk.QueueID()),
+				fmt.Sprintf("%d", stat.RxPackets),
+				fmt.Sprintf("%.0f", rate.RxPPS),
+				humanize.Bytes(int(stat.RxBytes)),
+				humanize.BitsRate(int(rate.RxBPS)),
+				fmt.Sprintf("%.0f", rate.RxIOPS),
+				fmt.Sprintf("%.0f", rate.RxErrorPS),
+			})
+
+			sum.RxPackets += stat.RxPackets
+			sum.RxBytes += stat.RxBytes
+			sum.RxPPS += rate.RxPPS
+			sum.RxBPS += rate.RxBPS
+			sum.RxIOPS += rate.RxIOPS
+			sum.RxErrorPS += rate.RxErrorPS
+		}
+		tbl.Append([]string{
+			"SUM",
+			fmt.Sprintf("%d", sum.RxPackets),
+			fmt.Sprintf("%.0f", sum.RxPPS),
+			humanize.Bytes(int(sum.RxBytes)),
+			humanize.BitsRate(int(sum.RxBPS)),
+			fmt.Sprintf("%.0f", sum.RxIOPS),
+			fmt.Sprintf("%.0f", sum.RxErrorPS),
+		})
+		tbl.Render()
+		fmt.Println()
+	}
+}
+
+func setAffinityCPU(cpu int) error {
+	var s unix.CPUSet
+	s.Zero()
+	s.Set(cpu)
+	return unix.SchedSetaffinity(0, &s)
 }
