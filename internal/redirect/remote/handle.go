@@ -23,5 +23,5 @@ func (h *RemoteHandle) HandleReqData([]byte) ([]byte, error) {
 	return nil, protos.ErrNotImpl
 }
 
-func (h *RemoteHandle) HandlePacketData(data []byte) {
+func (h *RemoteHandle) HandlePacketData(data *handle.PacketData) {
 }

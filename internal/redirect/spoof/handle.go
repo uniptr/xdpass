@@ -2,18 +2,14 @@ package spoof
 
 import (
 	"encoding/json"
-	"net"
 	"net/netip"
 	"sync"
-	"syscall"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
-	"golang.org/x/sys/unix"
 )
 
 type addrKey struct {
@@ -25,34 +21,13 @@ type SpoofHandle struct {
 	ifaceName string
 	mu        *sync.RWMutex // TODO: lock free
 	rules     map[addrKey]protos.SpoofRule
-	fd        int
-	addr      unix.SockaddrLinklayer
 }
 
 func NewSpoofHandle(ifaceName string) (handle.RedirectHandle, error) {
-	// TODO: use xdp tx
-	iface, err := net.InterfaceByName(ifaceName)
-	if err != nil {
-		return nil, errors.Wrap(err, "net.InterfaceByName")
-	}
-
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, unix.ETH_P_ALL)
-	if err != nil {
-		return nil, errors.Wrap(err, "unix.Socket")
-	}
-	logrus.WithFields(logrus.Fields{"fd": fd, "iface": ifaceName}).Debug("New raw socket for spoof")
-
 	return &SpoofHandle{
 		ifaceName: ifaceName,
 		mu:        &sync.RWMutex{},
 		rules:     make(map[addrKey]protos.SpoofRule),
-		fd:        fd,
-		addr: unix.SockaddrLinklayer{
-			Protocol: uint16(syscall.ETH_P_ALL),
-			Ifindex:  iface.Index,
-			Hatype:   1, // ARPHRD_ETHER
-			Pkttype:  syscall.PACKET_OUTGOING,
-		},
 	}, nil
 }
 
@@ -61,7 +36,7 @@ func (SpoofHandle) RedirectType() protos.RedirectType {
 }
 
 func (h *SpoofHandle) Close() error {
-	return unix.Close(h.fd)
+	return nil
 }
 
 func (h *SpoofHandle) HandleReqData(data []byte) ([]byte, error) {
@@ -132,16 +107,18 @@ func (h *SpoofHandle) handleOpDel(req *protos.SpoofReq) ([]byte, error) {
 	return []byte("{}"), nil
 }
 
-func (h *SpoofHandle) HandlePacketData(data []byte) {
+func (h *SpoofHandle) HandlePacketData(data *handle.PacketData) {
+	data.Len = 0
+
 	var eth layers.Ethernet
-	err := eth.DecodeFromBytes(data, gopacket.NilDecodeFeedback)
+	err := eth.DecodeFromBytes(data.Data, gopacket.NilDecodeFeedback)
 	if err != nil {
 		return
 	}
 
 	switch eth.EthernetType {
 	case layers.EthernetTypeIPv4:
-		err = h.handlePacketIPv4(&eth)
+		err = h.handlePacketIPv4(data, &eth)
 	}
 
 	if err != nil {
@@ -149,7 +126,7 @@ func (h *SpoofHandle) HandlePacketData(data []byte) {
 	}
 }
 
-func (h *SpoofHandle) handlePacketIPv4(eth *layers.Ethernet) error {
+func (h *SpoofHandle) handlePacketIPv4(data *handle.PacketData, eth *layers.Ethernet) error {
 	var ip layers.IPv4
 	err := ip.DecodeFromBytes(eth.Payload, gopacket.NilDecodeFeedback)
 	if err != nil {
@@ -158,13 +135,13 @@ func (h *SpoofHandle) handlePacketIPv4(eth *layers.Ethernet) error {
 
 	switch ip.Protocol {
 	case layers.IPProtocolICMPv4:
-		return h.handlePacketICMPv4(eth, &ip)
+		return h.handlePacketICMPv4(data, eth, &ip)
 	}
 
 	return nil
 }
 
-func (h *SpoofHandle) handlePacketICMPv4(eth *layers.Ethernet, ip *layers.IPv4) error {
+func (h *SpoofHandle) handlePacketICMPv4(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4) error {
 	src := protos.AddrPort(netip.AddrPortFrom(netip.AddrFrom4([4]byte(ip.SrcIP)), 0))
 	dst := protos.AddrPort(netip.AddrPortFrom(netip.AddrFrom4([4]byte(ip.DstIP)), 0))
 
@@ -203,5 +180,7 @@ func (h *SpoofHandle) handlePacketICMPv4(eth *layers.Ethernet, ip *layers.IPv4) 
 		return err
 	}
 
-	return unix.Sendto(h.fd, b.Bytes(), 0, &h.addr)
+	copy(data.Data, b.Bytes())
+	data.Len = len(b.Bytes())
+	return nil
 }

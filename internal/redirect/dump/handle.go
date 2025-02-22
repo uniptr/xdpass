@@ -23,5 +23,5 @@ func (h *DumpHandle) HandleReqData([]byte) ([]byte, error) {
 	return nil, protos.ErrNotImpl
 }
 
-func (h *DumpHandle) HandlePacketData(data []byte) {
+func (h *DumpHandle) HandlePacketData() {
 }

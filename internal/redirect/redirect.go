@@ -119,7 +119,7 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 
 	var xsks []*xdp.XDPSocket
 	for _, queueID := range queues {
-		s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(queueID), append(o.xdpOpts, xdp.WithTxSize(0))...)
+		s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(queueID), append(o.xdpOpts, xdp.WithFrameSize(2048))...)
 		if err != nil {
 			return nil, err
 		}
@@ -244,6 +244,13 @@ func (r *Redirect) Run(ctx context.Context) error {
 			for i := range dataVec {
 				dataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
 			}
+			// For tx data vec, avoid tx slice alloc
+			txDataVec := make([][]byte, 64)
+
+			pkts := make([]*handle.PacketData, 64)
+			for i := range pkts {
+				pkts[i] = &handle.PacketData{Data: dataVec[i], Len: xdp.UmemDefaultFrameSize}
+			}
 
 			for !done {
 				err := r.waitPoll()
@@ -251,7 +258,7 @@ func (r *Redirect) Run(ctx context.Context) error {
 					continue
 				}
 				for _, xsk := range g.xsks {
-					r.handleXSK(xsk, dataVec)
+					r.handleXSK(xsk, dataVec, txDataVec, pkts)
 				}
 			}
 		}(xg)
@@ -261,16 +268,25 @@ func (r *Redirect) Run(ctx context.Context) error {
 	return nil
 }
 
-func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, dataVec [][]byte) {
+func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, dataVec, txDataVec [][]byte, pkts []*handle.PacketData) {
 	n := xsk.Readv(dataVec)
 	if n == 0 {
 		return
 	}
 
+	txN := 0
 	for i := uint32(0); i < n; i++ {
 		for _, handle := range r.handles {
-			handle.HandlePacketData(dataVec[i])
+			handle.HandlePacketData(pkts[i])
+			if pkts[i].Len > 0 {
+				txDataVec[txN] = pkts[i].Data[:pkts[i].Len]
+				txN++
+			}
 		}
+	}
+
+	if txN > 0 {
+		xsk.Writev(txDataVec[:txN])
 	}
 }
 
@@ -322,7 +338,7 @@ func (r *Redirect) dumpStats() {
 	timer := time.NewTicker(time.Second * 3)
 	for range timer.C {
 		tbl := tablewriter.NewWriter(os.Stdout)
-		tbl.SetHeader([]string{"queue", "rx_pkts", "rx_pps", "rx_bytes", "rx_bps", "rx_iops", "rx_err_iops"})
+		tbl.SetHeader([]string{"queue", "rx_pkts", "rx_pps", "tx_pkts", "tx_pps", "rx_bytes", "rx_bps", "rx_iops", "rx_err_iops"})
 		tbl.SetAlignment(tablewriter.ALIGN_RIGHT)
 		tbl.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
 
@@ -339,6 +355,8 @@ func (r *Redirect) dumpStats() {
 				fmt.Sprintf("%d", xsk.QueueID()),
 				fmt.Sprintf("%d", stat.RxPackets),
 				fmt.Sprintf("%.0f", rate.RxPPS),
+				fmt.Sprintf("%d", stat.TxPackets),
+				fmt.Sprintf("%.0f", rate.TxPPS),
 				humanize.Bytes(int(stat.RxBytes)),
 				humanize.BitsRate(int(rate.RxBPS)),
 				fmt.Sprintf("%.0f", rate.RxIOPS),
@@ -346,8 +364,10 @@ func (r *Redirect) dumpStats() {
 			})
 
 			sum.RxPackets += stat.RxPackets
+			sum.TxPackets += stat.TxPackets
 			sum.RxBytes += stat.RxBytes
 			sum.RxPPS += rate.RxPPS
+			sum.TxPPS += rate.TxPPS
 			sum.RxBPS += rate.RxBPS
 			sum.RxIOPS += rate.RxIOPS
 			sum.RxErrorPS += rate.RxErrorPS
@@ -356,6 +376,8 @@ func (r *Redirect) dumpStats() {
 			"SUM",
 			fmt.Sprintf("%d", sum.RxPackets),
 			fmt.Sprintf("%.0f", sum.RxPPS),
+			fmt.Sprintf("%d", sum.TxPackets),
+			fmt.Sprintf("%.0f", sum.TxPPS),
 			humanize.Bytes(int(sum.RxBytes)),
 			humanize.BitsRate(int(sum.RxBPS)),
 			fmt.Sprintf("%.0f", sum.RxIOPS),
