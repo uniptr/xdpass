@@ -1,22 +1,26 @@
 package redirects
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/pkg/xdpprog"
 )
 
 type spoofOpt struct {
-	showList    bool
-	showTypes   bool
-	add         bool
-	del         bool
-	typ         protos.SpoofType
-	source      protos.AddrPort
-	destination protos.AddrPort
+	showList  bool
+	showTypes bool
+	add       bool
+	del       bool
+	typ       protos.SpoofType
+	srcIPLPM  xdpprog.IPLpmKey
+	dstIPLPM  xdpprog.IPLpmKey
+	srcPort   uint16
+	dstPort   uint16
 }
 
 var spoofCmd = &cobra.Command{
@@ -32,8 +36,10 @@ func init() {
 	spoofCmd.Flags().BoolVar(&opt.spoof.showTypes, "list-types", false, "Show supported spoof type list")
 	spoofCmd.Flags().BoolVar(&opt.spoof.add, "add", false, "Add spoof rule")
 	spoofCmd.Flags().BoolVar(&opt.spoof.del, "del", false, "Delete spoof rule")
-	spoofCmd.Flags().VarP(&opt.spoof.source, "source", "s", "Source address")
-	spoofCmd.Flags().VarP(&opt.spoof.destination, "dest", "d", "Destination address")
+	spoofCmd.Flags().VarP(&opt.spoof.srcIPLPM, "src-ip", "s", "Source IP")
+	spoofCmd.Flags().VarP(&opt.spoof.dstIPLPM, "dst-ip", "d", "Destination IP")
+	spoofCmd.Flags().Uint16Var(&opt.spoof.srcPort, "src-port", 0, "Source port")
+	spoofCmd.Flags().Uint16Var(&opt.spoof.dstPort, "dst-port", 0, "Destination port")
 	spoofCmd.Flags().VarP(&opt.spoof.typ, "spoof-type", "t", "Type for spoof rule")
 
 	redirectCmd.AddCommand(spoofCmd)
@@ -70,9 +76,14 @@ func (spoof) showList() error {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Interface", "Spoof Type", "Source", "Destination"})
+	table.SetHeader([]string{"ID", "Spoof Type", "Src IP", "Dst IP", "Src Port", "Dst Port"})
+	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	for _, rule := range resp.Rules {
-		table.Append([]string{rule.Interface, rule.SpoofType.String(), rule.Source.String(), rule.Destination.String()})
+		table.Append([]string{
+			fmt.Sprintf("%d", rule.ID), rule.SpoofType.String(),
+			rule.SrcIPAddrLPM.String(), rule.DstIPAddrLPM.String(),
+			fmt.Sprintf("%d", rule.SrcPort), fmt.Sprintf("%d", rule.DestPort),
+		})
 	}
 	table.Render()
 
@@ -99,10 +110,11 @@ func (spoof) showListTypes() error {
 
 func (spoof) opRule(op protos.SpoofOperation) error {
 	req := protos.SpoofReq{Operation: op, Rules: []protos.SpoofRule{{
-		Interface:   opt.ifaceName,
-		SpoofType:   opt.spoof.typ,
-		Source:      opt.spoof.source,
-		Destination: opt.spoof.destination,
+		SpoofType:    opt.spoof.typ,
+		SrcIPAddrLPM: opt.spoof.srcIPLPM,
+		DstIPAddrLPM: opt.spoof.dstIPLPM,
+		SrcPort:      opt.spoof.srcPort,
+		DestPort:     opt.spoof.dstPort,
 	}}}
 	_, err := postRequest[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
 	return err

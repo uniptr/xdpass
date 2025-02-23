@@ -3,6 +3,8 @@ package protos
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/zxhio/xdpass/pkg/xdpprog"
 )
 
 type RedirectType int
@@ -75,7 +77,7 @@ type RedirectReq struct {
 
 // Spoof
 
-type SpoofType int
+type SpoofType uint16
 
 const (
 	SpoofType_None SpoofType = iota
@@ -156,10 +158,13 @@ func (o SpoofOperation) String() string {
 }
 
 type SpoofRule struct {
-	Interface   string    `json:"interface,omitempty"`
-	SpoofType   SpoofType `json:"spoof_type"`
-	Source      AddrPort  `json:"source"`
-	Destination AddrPort  `json:"dest"`
+	ID           uint32           `json:"id,omitempty"`
+	SrcIPAddrLPM xdpprog.IPLpmKey `json:"src_ip_lpm"`
+	DstIPAddrLPM xdpprog.IPLpmKey `json:"dst_ip_lpm"`
+	SrcPort      uint16           `json:"src_port,omitempty"`
+	DestPort     uint16           `json:"dst_port,omitempty"`
+	Proto        uint16           `json:"proto,omitempty"`
+	SpoofType    SpoofType        `json:"spoof_type"`
 }
 
 type SpoofReq struct {

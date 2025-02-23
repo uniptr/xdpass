@@ -1,33 +1,38 @@
 package spoof
 
 import (
+	"encoding/binary"
 	"encoding/json"
-	"net/netip"
+	"net"
 	"sync"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/kentik/patricia"
+	"github.com/kentik/patricia/uint32_tree"
 	"github.com/sirupsen/logrus"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
 
-type addrKey struct {
-	Source      protos.AddrPort
-	Destination protos.AddrPort
-}
-
 type SpoofHandle struct {
 	ifaceName string
-	mu        *sync.RWMutex // TODO: lock free
-	rules     map[addrKey]protos.SpoofRule
+	id        uint32
+	mu        *sync.RWMutex
+	rules     map[uint32]protos.SpoofRule
+	ruleIDs   map[protos.SpoofRule]uint32
+	srcIPTrie *uint32_tree.TreeV4
+	dstIPTrie *uint32_tree.TreeV4
 }
 
 func NewSpoofHandle(ifaceName string) (handle.RedirectHandle, error) {
 	return &SpoofHandle{
 		ifaceName: ifaceName,
 		mu:        &sync.RWMutex{},
-		rules:     make(map[addrKey]protos.SpoofRule),
+		rules:     make(map[uint32]protos.SpoofRule),
+		ruleIDs:   make(map[protos.SpoofRule]uint32),
+		srcIPTrie: uint32_tree.NewTreeV4(),
+		dstIPTrie: uint32_tree.NewTreeV4(),
 	}, nil
 }
 
@@ -63,10 +68,14 @@ func (h *SpoofHandle) HandleReqData(data []byte) ([]byte, error) {
 }
 
 func (h *SpoofHandle) handleOpList(*protos.SpoofReq) ([]byte, error) {
-	var resp protos.SpoofResp
+	resp := protos.SpoofResp{Rules: make([]protos.SpoofRule, 0, len(h.rules))}
+
+	h.mu.RLock()
 	for _, rule := range h.rules {
 		resp.Rules = append(resp.Rules, rule)
 	}
+	h.mu.RUnlock()
+
 	return json.Marshal(resp)
 }
 
@@ -79,29 +88,62 @@ func (h *SpoofHandle) handleOpListTypes(*protos.SpoofReq) ([]byte, error) {
 
 func (h *SpoofHandle) handleOpAdd(req *protos.SpoofReq) ([]byte, error) {
 	for _, rule := range req.Rules {
-		logrus.WithFields(logrus.Fields{
-			"source": rule.Source,
-			"dest":   rule.Destination,
-			"type":   rule.SpoofType,
-			"iface":  rule.Interface,
-		}).Debug("Add spoof rule")
+		l := logrus.WithFields(logrus.Fields{
+			"sip_lpm":  rule.SrcIPAddrLPM,
+			"dip_lpm":  rule.DstIPAddrLPM,
+			"src_port": rule.SrcPort,
+			"dst_port": rule.DestPort,
+			"proto":    rule.Proto,
+			"type":     rule.SpoofType,
+		})
+
+		h.mu.RLock()
+		_, ok := h.ruleIDs[rule]
+		h.mu.RUnlock()
+		if ok {
+			l.Debug("Add duplicate spoof rule")
+			continue
+		}
 
 		h.mu.Lock()
-		h.rules[addrKey{Source: rule.Source, Destination: rule.Destination}] = rule
+		h.id++
+		h.ruleIDs[rule] = h.id
+		rule.ID = h.id
+		h.rules[h.id] = rule
+		h.srcIPTrie.Add(rule.SrcIPAddrLPM.To4(), h.id, nil)
+		h.dstIPTrie.Add(rule.DstIPAddrLPM.To4(), h.id, nil)
 		h.mu.Unlock()
+
+		l.WithField("id", h.id).Debug("Add spoof rule")
 	}
 	return []byte("{}"), nil
 }
 
 func (h *SpoofHandle) handleOpDel(req *protos.SpoofReq) ([]byte, error) {
 	for _, rule := range req.Rules {
-		logrus.WithFields(logrus.Fields{
-			"source": rule.Source,
-			"dest":   rule.Destination,
-		}).Debug("Delete spoof rule")
+		l := logrus.WithFields(logrus.Fields{
+			"sip_lpm":  rule.SrcIPAddrLPM,
+			"dip_lpm":  rule.DstIPAddrLPM,
+			"src_port": rule.SrcPort,
+			"dst_port": rule.DestPort,
+			"proto":    rule.Proto,
+			"type":     rule.SpoofType,
+		})
+
+		h.mu.RLock()
+		id, ok := h.ruleIDs[rule]
+		h.mu.RUnlock()
+		if !ok {
+			l.Debug("Delete no matched spoof rule")
+			continue
+		}
+		l.WithField("id", rule.ID).Debug("Delete spoof rule")
 
 		h.mu.Lock()
-		delete(h.rules, addrKey{Source: rule.Source, Destination: rule.Destination})
+		delete(h.rules, id)
+		delete(h.ruleIDs, rule)
+		h.srcIPTrie.Delete(rule.SrcIPAddrLPM.To4(), func(_, _ uint32) bool { return true }, id)
+		h.dstIPTrie.Delete(rule.DstIPAddrLPM.To4(), func(_, _ uint32) bool { return true }, id)
 		h.mu.Unlock()
 	}
 	return []byte("{}"), nil
@@ -141,21 +183,63 @@ func (h *SpoofHandle) handlePacketIPv4(data *handle.PacketData, eth *layers.Ethe
 	return nil
 }
 
-func (h *SpoofHandle) handlePacketICMPv4(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4) error {
-	src := protos.AddrPort(netip.AddrPortFrom(netip.AddrFrom4([4]byte(ip.SrcIP)), 0))
-	dst := protos.AddrPort(netip.AddrPortFrom(netip.AddrFrom4([4]byte(ip.DstIP)), 0))
+func (h *SpoofHandle) getIDByIP(sip, dip net.IP) uint32 {
+	return h.getIDByIPAddr(
+		patricia.NewIPv4Address(binary.BigEndian.Uint32(sip), 32),
+		patricia.NewIPv4Address(binary.BigEndian.Uint32(dip), 32),
+	)
+}
 
-	h.mu.RLock()
-	rule, ok := h.rules[addrKey{Source: src, Destination: dst}]
-	h.mu.RUnlock()
+func (h *SpoofHandle) getIDByIPAddr(sip, dip patricia.IPv4Address) uint32 {
+	ok, sIDList := h.srcIPTrie.FindDeepestTags(sip)
 	if !ok {
-		return nil
+		return 0
+	}
+	ok, dIDList := h.dstIPTrie.FindDeepestTags(dip)
+	if !ok {
+		return 0
+	}
+	if logrus.GetLevel() == logrus.DebugLevel {
+		logrus.WithFields(logrus.Fields{
+			"sip":   sip,
+			"dip":   dip,
+			"slist": sIDList,
+			"dlist": dIDList,
+		}).Debug("Find deepest ip lpm")
 	}
 
+	for _, sID := range sIDList {
+		for _, dID := range dIDList {
+			if sID == dID {
+				return sID
+			}
+		}
+	}
+	return 0
+}
+
+func (h *SpoofHandle) handlePacketICMPv4(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4) error {
 	var icmpv4 layers.ICMPv4
 	err := icmpv4.DecodeFromBytes(ip.Payload, gopacket.NilDecodeFeedback)
 	if err != nil {
 		return err
+	}
+
+	var (
+		rule protos.SpoofRule
+		ok   bool
+	)
+	h.mu.RLock()
+	id := h.getIDByIP(ip.SrcIP, ip.DstIP)
+	if id != 0 {
+		rule, ok = h.rules[id]
+	}
+	h.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	if logrus.GetLevel() == logrus.DebugLevel {
+		logrus.WithField("id", id).Debug("Matched rule")
 	}
 
 	if icmpv4.TypeCode.Type() != layers.ICMPv4TypeEchoRequest || rule.SpoofType != protos.SpoofType_ICMPEchoReply {

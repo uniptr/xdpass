@@ -1,13 +1,14 @@
 package xdpprog
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"strings"
 
 	"github.com/cilium/ebpf"
+	"github.com/kentik/patricia"
 )
 
 type FirewallMode uint32
@@ -40,21 +41,26 @@ func (key *IPLpmKey) Set(s string) error {
 }
 
 func (key *IPLpmKey) Type() string {
-	return "IPLpmKey"
+	return "IP[/PrefixLen]"
+}
+
+func (key IPLpmKey) IsIPv4() bool {
+	for i := 4; i < len(key.Data); i++ {
+		if key.Data[i] != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (key IPLpmKey) String() string {
-	isIPv4 := true
-	for i := 4; i < len(key.Data); i++ {
-		if key.Data[i] != 0 {
-			isIPv4 = false
-			break
-		}
+	var ipNet net.IPNet
+	if key.IsIPv4() {
+		ipNet = net.IPNet{IP: key.Data[:4], Mask: net.CIDRMask(int(key.PrefixLen), 32)}
+	} else {
+		ipNet = net.IPNet{IP: key.Data[:], Mask: net.CIDRMask(int(key.PrefixLen), 128)}
 	}
-	if isIPv4 {
-		return fmt.Sprintf("%s/%d", net.IP(key.Data[:4]).String(), key.PrefixLen)
-	}
-	return fmt.Sprintf("%s/%d", net.IP(key.Data[:]).String(), key.PrefixLen)
+	return ipNet.String()
 }
 
 func (key IPLpmKey) MarshalJSON() ([]byte, error) {
@@ -68,6 +74,14 @@ func (key *IPLpmKey) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	return key.Set(s)
+}
+
+func (key *IPLpmKey) To4() patricia.IPv4Address {
+	return patricia.NewIPv4Address(binary.BigEndian.Uint32(key.Data[:4]), uint(key.PrefixLen))
+}
+
+func (key *IPLpmKey) To6() patricia.IPv6Address {
+	return patricia.NewIPv6Address(key.Data[:], uint(key.PrefixLen))
 }
 
 func MakeIPLpmKeyFromIP(ip net.IP) *IPLpmKey {
