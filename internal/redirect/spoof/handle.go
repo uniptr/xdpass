@@ -92,7 +92,7 @@ func (h *SpoofHandle) handleOpAdd(req *protos.SpoofReq) ([]byte, error) {
 			"sip_lpm":  rule.SrcIPAddrLPM,
 			"dip_lpm":  rule.DstIPAddrLPM,
 			"src_port": rule.SrcPort,
-			"dst_port": rule.DestPort,
+			"dst_port": rule.DstPort,
 			"proto":    rule.Proto,
 			"type":     rule.SpoofType,
 		})
@@ -125,7 +125,7 @@ func (h *SpoofHandle) handleOpDel(req *protos.SpoofReq) ([]byte, error) {
 			"sip_lpm":  rule.SrcIPAddrLPM,
 			"dip_lpm":  rule.DstIPAddrLPM,
 			"src_port": rule.SrcPort,
-			"dst_port": rule.DestPort,
+			"dst_port": rule.DstPort,
 			"proto":    rule.Proto,
 			"type":     rule.SpoofType,
 		})
@@ -178,6 +178,8 @@ func (h *SpoofHandle) handlePacketIPv4(data *handle.PacketData, eth *layers.Ethe
 	switch ip.Protocol {
 	case layers.IPProtocolICMPv4:
 		return h.handlePacketICMPv4(data, eth, &ip)
+	case layers.IPProtocolTCP:
+		return h.handlePacketTCP(data, eth, &ip)
 	}
 
 	return nil
@@ -212,6 +214,29 @@ func (h *SpoofHandle) getIDByIPAddr(sip, dip patricia.IPv4Address) uint32 {
 		for _, dID := range dIDList {
 			if sID == dID {
 				return sID
+			}
+		}
+	}
+	return 0
+}
+
+func (h *SpoofHandle) getIDByIPAddrPort(sip, dip patricia.IPv4Address, sport, dport uint16) uint32 {
+	ok, sIDList := h.srcIPTrie.FindDeepestTags(sip)
+	if !ok {
+		return 0
+	}
+	ok, dIDList := h.dstIPTrie.FindDeepestTags(dip)
+	if !ok {
+		return 0
+	}
+
+	for _, sID := range sIDList {
+		for _, dID := range dIDList {
+			if sID == dID {
+				if (h.rules[sID].SrcPort == 0 || h.rules[sID].SrcPort == sport) &&
+					(h.rules[dID].DstPort == 0 || h.rules[dID].DstPort == dport) {
+					return sID
+				}
 			}
 		}
 	}
@@ -260,6 +285,74 @@ func (h *SpoofHandle) handlePacketICMPv4(data *handle.PacketData, eth *layers.Et
 
 	b := gopacket.NewSerializeBuffer()
 	err = gopacket.SerializeLayers(b, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}, &l2, &l3, &l4, gopacket.Payload(l4.Payload))
+	if err != nil {
+		return err
+	}
+
+	copy(data.Data, b.Bytes())
+	data.Len = len(b.Bytes())
+	return nil
+}
+
+func (h *SpoofHandle) handlePacketTCP(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4) error {
+	var tcp layers.TCP
+	err := tcp.DecodeFromBytes(ip.Payload, gopacket.NilDecodeFeedback)
+	if err != nil {
+		return err
+	}
+
+	var (
+		rule protos.SpoofRule
+		ok   bool
+	)
+	h.mu.RLock()
+	id := h.getIDByIPAddrPort(
+		patricia.NewIPv4Address(binary.BigEndian.Uint32(ip.SrcIP), 32),
+		patricia.NewIPv4Address(binary.BigEndian.Uint32(ip.DstIP), 32),
+		uint16(tcp.SrcPort),
+		uint16(tcp.DstPort),
+	)
+	if id != 0 {
+		rule, ok = h.rules[id]
+	}
+	h.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	if logrus.GetLevel() == logrus.DebugLevel {
+		logrus.WithField("id", id).Debug("Matched rule")
+	}
+
+	if rule.SpoofType == protos.SpoofType_TCPReset {
+		return h.handlePacketTCPReset(data, eth, ip, &tcp)
+	} else if rule.SpoofType == protos.SpoofType_TCPResetSYN && tcp.SYN {
+		return h.handlePacketTCPReset(data, eth, ip, &tcp)
+	}
+	return nil
+}
+
+func (h *SpoofHandle) handlePacketTCPReset(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4, tcp *layers.TCP) error {
+	l2 := *eth
+	l2.SrcMAC = eth.DstMAC
+	l2.DstMAC = eth.SrcMAC
+	l2.EthernetType = eth.EthernetType
+
+	l3 := *ip
+	l3.SrcIP = ip.DstIP
+	l3.DstIP = ip.SrcIP
+	l3.TTL = 78
+
+	l4 := layers.TCP{
+		SrcPort: tcp.DstPort,
+		DstPort: tcp.SrcPort,
+		Ack:     tcp.Seq + 1,
+		RST:     true,
+		ACK:     true,
+	}
+	l4.SetNetworkLayerForChecksum(&l3)
+
+	b := gopacket.NewSerializeBuffer()
+	err := gopacket.SerializeLayers(b, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}, &l2, &l3, &l4, gopacket.Payload(l4.Payload))
 	if err != nil {
 		return err
 	}

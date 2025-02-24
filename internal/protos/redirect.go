@@ -82,21 +82,27 @@ type SpoofType uint16
 const (
 	SpoofType_None SpoofType = iota
 	SpoofType_ICMPEchoReply
+	SpoofType_TCPReset
+	SpoofType_TCPResetSYN
 )
 
 const (
 	SpoofTypeStr_None          = "none"
 	SpoofTypeStr_ICMPEchoReply = "icmp-echo-reply"
+	SpoofTypeStr_TCPReset      = "tcp-reset"
+	SpoofTypeStr_TCPResetSYN   = "tcp-reset-syn"
 )
 
 var spoofTypeLookup = map[string]SpoofType{
 	SpoofTypeStr_None:          SpoofType_None,
 	SpoofTypeStr_ICMPEchoReply: SpoofType_ICMPEchoReply,
+	SpoofTypeStr_TCPReset:      SpoofType_TCPReset,
 }
 
 var spoofTypeStrLookup = map[SpoofType]string{
 	SpoofType_None:          SpoofTypeStr_None,
 	SpoofType_ICMPEchoReply: SpoofTypeStr_ICMPEchoReply,
+	SpoofType_TCPReset:      SpoofTypeStr_TCPReset,
 }
 
 func (t SpoofType) String() string { return spoofTypeStrLookup[t] }
@@ -162,7 +168,7 @@ type SpoofRule struct {
 	SrcIPAddrLPM xdpprog.IPLpmKey `json:"src_ip_lpm"`
 	DstIPAddrLPM xdpprog.IPLpmKey `json:"dst_ip_lpm"`
 	SrcPort      uint16           `json:"src_port,omitempty"`
-	DestPort     uint16           `json:"dst_port,omitempty"`
+	DstPort      uint16           `json:"dst_port,omitempty"`
 	Proto        uint16           `json:"proto,omitempty"`
 	SpoofType    SpoofType        `json:"spoof_type"`
 }

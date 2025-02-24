@@ -82,7 +82,7 @@ func (spoof) showList() error {
 		table.Append([]string{
 			fmt.Sprintf("%d", rule.ID), rule.SpoofType.String(),
 			rule.SrcIPAddrLPM.String(), rule.DstIPAddrLPM.String(),
-			fmt.Sprintf("%d", rule.SrcPort), fmt.Sprintf("%d", rule.DestPort),
+			fmt.Sprintf("%d", rule.SrcPort), fmt.Sprintf("%d", rule.DstPort),
 		})
 	}
 	table.Render()
@@ -114,7 +114,7 @@ func (spoof) opRule(op protos.SpoofOperation) error {
 		SrcIPAddrLPM: opt.spoof.srcIPLPM,
 		DstIPAddrLPM: opt.spoof.dstIPLPM,
 		SrcPort:      opt.spoof.srcPort,
-		DestPort:     opt.spoof.dstPort,
+		DstPort:      opt.spoof.dstPort,
 	}}}
 	_, err := postRequest[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
 	return err
