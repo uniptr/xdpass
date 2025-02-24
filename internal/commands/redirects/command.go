@@ -17,20 +17,6 @@ var redirectCmd = &cobra.Command{
 	},
 }
 
-var tapCmd = &cobra.Command{
-	Use:   protos.RedirectTypeStr_Tap,
-	Short: "Redirect network traffic to tap device",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return nil
-	},
-}
-
-type tapOpt struct {
-	show bool
-	add  string
-	del  string
-}
-
 var dumpCmd = &cobra.Command{
 	Use:   protos.RedirectTypeStr_Dump,
 	Short: "Dump network traffic packets",
@@ -60,7 +46,7 @@ type remoteOpt struct {
 var opt struct {
 	ifaceName string
 
-	tap    tapOpt
+	tuntap tunOpt
 	dump   dumpOpt
 	remote remoteOpt
 	spoof  spoofOpt
@@ -68,11 +54,6 @@ var opt struct {
 
 func init() {
 	commands.SetFlagsInterface(redirectCmd.PersistentFlags(), &opt.ifaceName)
-
-	// Tap
-	commands.SetFlagsList(tapCmd.Flags(), &opt.tap.show, "List tap info")
-	tapCmd.Flags().StringVar(&opt.tap.add, "add", "", "Add tap device")
-	tapCmd.Flags().StringVar(&opt.tap.del, "del", "", "Delete tap device")
 
 	// Dump
 
@@ -82,7 +63,6 @@ func init() {
 	remoteCmd.Flags().StringVar(&opt.remote.add, "add", "", "Add remote address")
 	remoteCmd.Flags().StringVar(&opt.remote.del, "del", "", "Delete remote address")
 
-	redirectCmd.AddCommand(tapCmd)
 	redirectCmd.AddCommand(dumpCmd)
 	redirectCmd.AddCommand(remoteCmd)
 

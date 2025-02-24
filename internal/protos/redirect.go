@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/vishvananda/netlink"
 	"github.com/zxhio/xdpass/pkg/xdpprog"
 )
 
@@ -13,28 +14,28 @@ const (
 	RedirectType_Dump RedirectType = iota + 1
 	RedirectType_Remote
 	RedirectType_Spoof
-	RedirectType_Tap
+	RedirectType_Tuntap
 )
 
 const (
 	RedirectTypeStr_Dump   = "dump"
 	RedirectTypeStr_Remote = "remote"
 	RedirectTypeStr_Spoof  = "spoof"
-	RedirectTypeStr_Tap    = "tap"
+	RedirectTypeStr_Tuntap = "tuntap"
 )
 
 var redirectTypeStrLookup = map[RedirectType]string{
 	RedirectType_Dump:   RedirectTypeStr_Dump,
 	RedirectType_Remote: RedirectTypeStr_Remote,
 	RedirectType_Spoof:  RedirectTypeStr_Spoof,
-	RedirectType_Tap:    RedirectTypeStr_Tap,
+	RedirectType_Tuntap: RedirectTypeStr_Tuntap,
 }
 
 var redirectTypeLookup = map[string]RedirectType{
 	RedirectTypeStr_Dump:   RedirectType_Dump,
 	RedirectTypeStr_Remote: RedirectType_Remote,
 	RedirectTypeStr_Spoof:  RedirectType_Spoof,
-	RedirectTypeStr_Tap:    RedirectType_Tap,
+	RedirectTypeStr_Tuntap: RedirectType_Tuntap,
 }
 
 func (t RedirectType) String() string {
@@ -180,4 +181,43 @@ type SpoofReq struct {
 
 type SpoofResp struct {
 	Rules []SpoofRule `json:"rules,omitempty"`
+}
+
+// Tun
+
+type TuntapOperation int
+
+const (
+	TuntapOperation_Nop TuntapOperation = iota
+	TuntapOperation_List
+	TuntapOperation_Add
+	TuntapOperation_Del
+)
+
+func (o TuntapOperation) String() string {
+	switch o {
+	case TuntapOperation_Nop:
+		return "nop"
+	case TuntapOperation_List:
+		return "list"
+	case TuntapOperation_Add:
+		return "add"
+	case TuntapOperation_Del:
+		return "del"
+	}
+	return "unknown"
+}
+
+type TuntapReq struct {
+	Operation TuntapOperation `json:"operation"`
+	Devices   []TuntapDevice  `json:"devices,omitempty"`
+}
+
+type TuntapDevice struct {
+	Name string             `json:"name"`
+	Mode netlink.TuntapMode `json:"mode,omitempty"`
+}
+
+type TuntapResp struct {
+	Devices []TuntapDevice `json:"devices,omitempty"`
 }

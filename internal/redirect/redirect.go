@@ -19,6 +19,7 @@ import (
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
+	"github.com/zxhio/xdpass/internal/redirect/tuntap"
 	"github.com/zxhio/xdpass/pkg/humanize"
 	"github.com/zxhio/xdpass/pkg/netutil"
 	"github.com/zxhio/xdpass/pkg/utils"
@@ -188,8 +189,13 @@ func (r *Redirect) setHandles(ifaceName string) error {
 	r.handles[spoofHandle.RedirectType()] = spoofHandle
 	r.closers = append(r.closers, utils.NamedCloser{Name: "spoof.SpoofHandle", Close: spoofHandle.Close})
 
-	// Tap
-	// TODO: implement
+	// Tun
+	tunHandle, err := tuntap.NewTuntapHandle()
+	if err != nil {
+		return err
+	}
+	r.handles[tunHandle.RedirectType()] = tunHandle
+	r.closers = append(r.closers, utils.NamedCloser{Name: "tun.TunHandle", Close: tunHandle.Close})
 
 	return nil
 }
@@ -278,10 +284,11 @@ func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, dataVec, txDataVec [][]byte, pk
 	for i := uint32(0); i < n; i++ {
 		for _, handle := range r.handles {
 			handle.HandlePacketData(pkts[i])
-			if pkts[i].Len > 0 {
-				txDataVec[txN] = pkts[i].Data[:pkts[i].Len]
-				txN++
-			}
+		}
+		// FIXME: split rx and tx data
+		if pkts[i].Len > 0 {
+			txDataVec[txN] = pkts[i].Data[:pkts[i].Len]
+			txN++
 		}
 	}
 

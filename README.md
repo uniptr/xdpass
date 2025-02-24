@@ -79,6 +79,71 @@ To filter network packets by setting an IP or CIDR.
 
 Using XDP to filter or redirect packets to user space.
 
+
+### redirect
+
+Redirect network traffic. 
+
+#### spoof
+TODO
+
+#### tuntap
+
+Redirect network packets to tuntap devices.
+
+##### Usage
+
+You can see the packets on the `<DEVICES>` interface by capture services.
+
+e.g. tcpdump
+```shell
+$ tcpdump -i tun0 -nne
+18:16:13.908935 ip: 172.16.23.1 > 172.16.23.2: ICMP echo reply, id 32641, seq 1, length 64
+
+$ tcpdump -i tap0 -nne
+18:17:23.324136 6a:10:e9:37:63:ac > 72:18:fd:f4:fa:b8, ethertype IPv4 (0x0800), length 4096: 172.16.23.1 > 172.16.23.2: ICMP echo reply, id 19116, seq 1, length 64
+```
+
+e.g. suricata
+```shell
+$ cat /etc/suricata/rules/suricata.rules
+alert icmp any any -> $HOME_NET any (msg:"ICMP echo v4 connection"; itype:8; sid:9010012; rev:1; metadata:created_at 2020_01_07;)
+
+# default config
+$ suricata -i tap0
+
+$ tail -n 1 /var/log/suricata/fast.log
+02/24/2025-09:32:26.634435  [**] [1:9010012:1] ICMP echo v4 connection [**] [Classification: (null)] [Priority: 3] {ICMP} 172.16.23.2:8 -> 172.16.23.1:0
+```
+
+##### Commands
+
+Use `--add-tun -U` to add tun devices.
+```shell
+$ ./xdpass redirect tuntap -U tun0
+```
+
+Use `--add-tap -A` to add tap devices.
+```shell
+$ ./xdpass redirect tuntap -A tap0
+```
+
+Use `--del -D` to delete tuntap devices.
+```shell
+$ ./xdpass redirect tuntap -D tun0,tap0
+```
+
+Use `--list -l` to show tuntap devices info.
+```shell
+$ ./xdpass redirect tuntap --list
++-------+--------+------+
+| INDEX | DEVICE | MODE |
++-------+--------+------+
+|   1   |  tun0  | tun  |
+|   2   |  tap0  | tap  |
++-------+--------+------+
+```
+
 ## scripts
 
 ### make_test_env.sh
