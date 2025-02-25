@@ -7,6 +7,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/sirupsen/logrus"
+	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/pkg/xdpprog"
 )
@@ -77,29 +78,27 @@ func (f *Filter) List() ([]xdpprog.IPLpmKey, error) {
 func (f *Filter) CommandType() protos.Type { return protos.Type_Filter }
 
 // For cmdconn.ReqDataHandle
-func (f *Filter) HandleReqData(data []byte) ([]byte, error) {
+func (f *Filter) HandleReqData(client *commands.MessageClient, data []byte) error {
 	var req protos.FilterReq
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		return nil, err
-	}
-
-	if req.Operation == protos.FilterOperation_List {
-		return f.handleOpShowList()
+		return commands.ResponseError(client, err)
 	}
 
 	switch req.Operation {
 	case protos.FilterOperation_Nop:
-		return []byte("{}"), nil
+		data, err = []byte("{}"), nil
 	case protos.FilterOperation_List:
-		return f.handleOpShowList()
+		data, err = f.handleOpShowList()
 	case protos.FilterOperation_Add:
-		return f.handleOpAddDel(req.Rules, protos.FilterOperation_Add, f.AddIPKey)
+		data, err = f.handleOpAddDel(req.Rules, protos.FilterOperation_Add, f.AddIPKey)
 	case protos.FilterOperation_Del:
-		return f.handleOpAddDel(req.Rules, protos.FilterOperation_Del, f.DelIPKey)
+		data, err = f.handleOpAddDel(req.Rules, protos.FilterOperation_Del, f.DelIPKey)
 	}
-
-	return nil, nil
+	if err != nil {
+		return commands.ResponseError(client, err)
+	}
+	return commands.Response(client, &protos.MessageResp{Data: data})
 }
 
 func (f *Filter) handleOpShowList() ([]byte, error) {

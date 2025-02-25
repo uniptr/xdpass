@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zxhio/xdpass/internal/commands"
-	"github.com/zxhio/xdpass/internal/commands/cmdconn"
 	"github.com/zxhio/xdpass/internal/protos"
 )
 
@@ -15,17 +14,6 @@ var redirectCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return nil
 	},
-}
-
-var dumpCmd = &cobra.Command{
-	Use:   protos.RedirectTypeStr_Dump,
-	Short: "Dump network traffic packets",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return nil
-	},
-}
-
-type dumpOpt struct {
 }
 
 var remoteCmd = &cobra.Command{
@@ -55,28 +43,24 @@ var opt struct {
 func init() {
 	commands.SetFlagsInterface(redirectCmd.PersistentFlags(), &opt.ifaceName)
 
-	// Dump
-
 	// Remote
 	commands.SetFlagsList(remoteCmd.Flags(), &opt.remote.show, "List remote address")
 	remoteCmd.Flags().StringVarP(&opt.remote.network, "network", "n", "tcp", "Address network (tcp|udp|unix)")
 	remoteCmd.Flags().StringVar(&opt.remote.add, "add", "", "Add remote address")
 	remoteCmd.Flags().StringVar(&opt.remote.del, "del", "", "Delete remote address")
 
-	redirectCmd.AddCommand(dumpCmd)
 	redirectCmd.AddCommand(remoteCmd)
 
 	commands.Register(redirectCmd)
 }
 
-func postRequest[Q, R any](redirectType protos.RedirectType, v *Q) (*R, error) {
+func getResponse[Q, R any](redirectType protos.RedirectType, v *Q) (*R, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-
 	req := protos.RedirectReq{RedirectType: redirectType, RedirectData: data}
-	resp, err := cmdconn.PostRequest[protos.RedirectReq, R](protos.Type_Redirect, &req)
+	resp, err := commands.GetMessage[protos.RedirectReq, R](protos.Type_Redirect, "", &req)
 	if err != nil {
 		return nil, err
 	}

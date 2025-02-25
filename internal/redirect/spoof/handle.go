@@ -11,6 +11,7 @@ import (
 	"github.com/kentik/patricia"
 	"github.com/kentik/patricia/uint32_tree"
 	"github.com/sirupsen/logrus"
+	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
@@ -44,27 +45,29 @@ func (h *SpoofHandle) Close() error {
 	return nil
 }
 
-func (h *SpoofHandle) HandleReqData(data []byte) ([]byte, error) {
+func (h *SpoofHandle) HandleReqData(client *commands.MessageClient, data []byte) error {
 	var req protos.SpoofReq
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		return nil, err
+		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
 	}
 
 	switch req.Operation {
 	case protos.SpoofOperation_Nop:
-		return []byte("{}"), nil
+		return handle.ResponseRedirectData(client, []byte("{}"))
 	case protos.SpoofOperation_List:
-		return h.handleOpList(&req)
+		data, err = h.handleOpList(&req)
 	case protos.SpoofOperation_ListTypes:
-		return h.handleOpListTypes(&req)
+		data, err = h.handleOpListTypes(&req)
 	case protos.SpoofOperation_Add:
-		return h.handleOpAdd(&req)
+		data, err = h.handleOpAdd(&req)
 	case protos.SpoofOperation_Del:
-		return h.handleOpDel(&req)
+		data, err = h.handleOpDel(&req)
 	}
-
-	return nil, protos.ErrNotImpl
+	if err != nil {
+		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
+	}
+	return handle.ResponseRedirectData(client, data)
 }
 
 func (h *SpoofHandle) handleOpList(*protos.SpoofReq) ([]byte, error) {

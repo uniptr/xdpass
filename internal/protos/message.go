@@ -80,3 +80,38 @@ type MessageResp struct {
 	Message   string          `json:"message,omitempty"`
 	ErrorCode ErrorCode       `json:"error_code,omitempty"`
 }
+
+func MakeMessageReqData[T any](t Type, id string, v *T) ([]byte, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(MessageReq{Type: t, ID: id, Data: data})
+}
+
+func MakeMessageRespData[T any](status int, id string, v *T) ([]byte, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(MessageResp{Status: status, ID: id, Data: data})
+}
+
+func GetMessageRespValue[T any](data []byte) (*T, error) {
+	var resp MessageResp
+	err := json.Unmarshal(data, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.ErrorCode != 0 {
+		return nil, fmt.Errorf("error code: %d, message: %s", resp.ErrorCode, resp.Message)
+	}
+
+	var v T
+	err = json.Unmarshal(resp.Data, &v)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}

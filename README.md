@@ -84,6 +84,14 @@ Using XDP to filter or redirect packets to user space.
 
 Redirect network traffic. 
 
+#### dump
+
+Dump network packets to stdout.
+
+```shell
+$ ./xdpass redirect dump
+```
+
 #### spoof
 TODO
 

@@ -15,6 +15,7 @@ var tunCmd = &cobra.Command{
 	Use:   protos.RedirectTypeStr_Tuntap,
 	Short: "Redirect network traffic to tuntap devices",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		commands.SetVerbose()
 		return tuntap{}.handleCommand(&opt.tuntap)
 	},
 }
@@ -38,8 +39,6 @@ func init() {
 type tuntap struct{}
 
 func (t tuntap) handleCommand(opt *tunOpt) error {
-	commands.SetVerbose()
-
 	if opt.show {
 		return t.show()
 	}
@@ -57,10 +56,8 @@ func (t tuntap) handleCommand(opt *tunOpt) error {
 }
 
 func (tuntap) show() error {
-	var req protos.TuntapReq
-	req.Operation = protos.TuntapOperation_List
-
-	resp, err := postRequest[protos.TuntapReq, protos.TuntapResp](protos.RedirectType_Tuntap, &req)
+	req := protos.TuntapReq{Operation: protos.TuntapOperation_List}
+	resp, err := getResponse[protos.TuntapReq, protos.TuntapResp](protos.RedirectType_Tuntap, &req)
 	if err != nil {
 		return err
 	}
@@ -83,6 +80,6 @@ func (tuntap) postRules(op protos.TuntapOperation, devs []string, mode netlink.T
 	for _, dev := range devs {
 		req.Devices = append(req.Devices, protos.TuntapDevice{Name: dev, Mode: mode})
 	}
-	_, err := postRequest[protos.TuntapReq, protos.TuntapResp](protos.RedirectType_Tuntap, &req)
+	_, err := getResponse[protos.TuntapReq, protos.TuntapResp](protos.RedirectType_Tuntap, &req)
 	return err
 }

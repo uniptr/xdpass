@@ -7,6 +7,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
+	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
@@ -37,21 +38,25 @@ func (h *TuntapHandle) Close() error {
 	return nil
 }
 
-func (h *TuntapHandle) HandleReqData(data []byte) ([]byte, error) {
+func (h *TuntapHandle) HandleReqData(client *commands.MessageClient, data []byte) error {
 	var req protos.TuntapReq
-	if err := json.Unmarshal(data, &req); err != nil {
-		return nil, err
+	err := json.Unmarshal(data, &req)
+	if err != nil {
+		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
 	}
 
 	switch req.Operation {
 	case protos.TuntapOperation_List:
-		return h.handleOpList()
+		data, err = h.handleOpList()
 	case protos.TuntapOperation_Add:
-		return h.handleOpAdd(&req)
+		data, err = h.handleOpAdd(&req)
 	case protos.TuntapOperation_Del:
-		return h.handleOpDel(&req)
+		data, err = h.handleOpDel(&req)
 	}
-	return nil, fmt.Errorf("invalid operation: %s", req.Operation)
+	if err != nil {
+		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
+	}
+	return handle.ResponseRedirectData(client, data)
 }
 
 func (h *TuntapHandle) handleOpList() ([]byte, error) {

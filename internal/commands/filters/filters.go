@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/olekukonko/tablewriter"
-	"github.com/zxhio/xdpass/internal/commands/cmdconn"
+	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/pkg/xdpprog"
 )
@@ -28,7 +28,7 @@ func (f filter) handleCommand() error {
 
 func (f filter) showList() error {
 	req := protos.FilterReq{Operation: protos.FilterOperation_List}
-	resp, err := cmdconn.PostRequest[protos.FilterReq, protos.FilterResp](protos.Type_Filter, &req)
+	resp, err := commands.GetMessage[protos.FilterReq, protos.FilterResp](protos.Type_Filter, commands.DefUnixSock, &req)
 	if err != nil {
 		return err
 	}
@@ -50,6 +50,6 @@ func (f filter) showList() error {
 
 func (f filter) opRule(op protos.FilterOperation, key xdpprog.IPLpmKey) error {
 	req := protos.FilterReq{Operation: op, Rules: []protos.FilterRule{{Keys: []xdpprog.IPLpmKey{key}}}}
-	_, err := cmdconn.PostRequest[protos.FilterReq, protos.FilterResp](protos.Type_Filter, &req)
+	_, err := commands.GetMessage[protos.FilterReq, protos.FilterResp](protos.Type_Filter, "", &req)
 	return err
 }

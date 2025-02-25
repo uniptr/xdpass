@@ -14,9 +14,10 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
-	"github.com/zxhio/xdpass/internal/commands/cmdconn"
+	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/firewall"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/internal/redirect/dump"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
 	"github.com/zxhio/xdpass/internal/redirect/tuntap"
@@ -63,7 +64,7 @@ type Redirect struct {
 	*xdpprog.Objects
 	xsks    []*xdp.XDPSocket
 	filter  *firewall.Filter
-	server  *cmdconn.TLVServer
+	server  *commands.MessageServer
 	handles map[protos.RedirectType]handle.RedirectHandle
 	closers utils.NamedClosers
 }
@@ -153,8 +154,8 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 		filter:       filter,
 	}
 
-	// Command server
-	server, err := cmdconn.NewTLVServer(filter, &r)
+	// TODO: add address option
+	server, err := commands.NewMessageServer(commands.DefUnixSock, filter, &r)
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
@@ -176,7 +177,12 @@ func (r *Redirect) setHandles(ifaceName string) error {
 	r.handles = map[protos.RedirectType]handle.RedirectHandle{}
 
 	// Dump
-	// TODO: implement
+	dumpHandle, err := dump.NewDumpHandle()
+	if err != nil {
+		return err
+	}
+	r.handles[dumpHandle.RedirectType()] = dumpHandle
+	r.closers = append(r.closers, utils.NamedCloser{Name: "dump.DumpHandle", Close: dumpHandle.Close})
 
 	// Remote
 	// TODO: implement
@@ -325,18 +331,20 @@ func (*Redirect) CommandType() protos.Type {
 	return protos.Type_Redirect
 }
 
-func (r *Redirect) HandleReqData(data []byte) ([]byte, error) {
+func (r *Redirect) HandleReqData(client *commands.MessageClient, data []byte) error {
+	logrus.WithField("data", string(data)).Debug("Handle redirect request data")
+
 	var req protos.RedirectReq
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		return nil, err
+		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
 	}
 
 	handle, ok := r.handles[req.RedirectType]
 	if !ok {
-		return nil, fmt.Errorf("invalid redirect type: %s", req.RedirectType)
+		return commands.ResponseErrorCode(client, fmt.Errorf("invalid redirect type: %s", req.RedirectType), protos.ErrorCode_InvalidRequest)
 	}
-	return handle.HandleReqData(req.RedirectData)
+	return handle.HandleReqData(client, req.RedirectData)
 }
 
 func (r *Redirect) dumpStats() {
