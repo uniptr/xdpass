@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 
 	"github.com/sirupsen/logrus"
 	"github.com/zxhio/xdpass/internal/protos"
@@ -115,6 +116,11 @@ type MessageServer struct {
 }
 
 func NewMessageServer(addr string, handles ...MessageHandle) (*MessageServer, error) {
+	err := os.RemoveAll(addr)
+	if err != nil {
+		return nil, err
+	}
+
 	lis, err := net.Listen("unix", addr)
 	if err != nil {
 		return nil, err

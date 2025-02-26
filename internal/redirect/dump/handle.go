@@ -3,22 +3,32 @@ package dump
 import (
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
 
 type DumpHandle struct {
-	connected uint32
-	client    *commands.MessageClient // only one client
-	dataCh    chan []byte
+	connected  uint32
+	client     *commands.MessageClient // only one client
+	rxDataPool *sync.Pool
+	rxDataCh   chan []byte
 }
 
 func NewDumpHandle() (handle.RedirectHandle, error) {
-	h := &DumpHandle{dataCh: make(chan []byte, 1024)}
+	h := &DumpHandle{
+		rxDataPool: &sync.Pool{
+			New: func() any {
+				return make([]byte, 2048)
+			},
+		},
+		rxDataCh: make(chan []byte, 1024),
+	}
 	go h.txLoop()
 	return h, nil
 }
@@ -31,11 +41,12 @@ func (h *DumpHandle) Close() error {
 	if h.client != nil {
 		h.client.Close()
 	}
+	close(h.rxDataCh)
 	return nil
 }
 
 func (h *DumpHandle) txLoop() bool {
-	for data := range h.dataCh {
+	for data := range h.rxDataCh {
 		if atomic.LoadUint32(&h.connected) == 1 && h.client != nil {
 			h.client.Write(data)
 		}
@@ -71,9 +82,11 @@ func (h *DumpHandle) HandleReqData(client *commands.MessageClient, data []byte) 
 	}
 }
 
-func (h *DumpHandle) HandlePacketData(data *handle.PacketData) {
+func (h *DumpHandle) HandlePacket(data *packets.Packet) {
 	if atomic.LoadUint32(&h.connected) == 0 {
 		return
 	}
-	h.dataCh <- data.Data
+	rxData := h.rxDataPool.Get().([]byte)
+	copy(rxData, data.RxData)
+	h.rxDataCh <- rxData
 }

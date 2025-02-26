@@ -2,6 +2,7 @@ package remote
 
 import (
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
 
@@ -23,5 +24,5 @@ func (h *RemoteHandle) HandleReqData([]byte) ([]byte, error) {
 	return nil, protos.ErrNotImpl
 }
 
-func (h *RemoteHandle) HandlePacketData(data *handle.PacketData) {
+func (h *RemoteHandle) HandlePacket(pkt *packets.Packet) {
 }

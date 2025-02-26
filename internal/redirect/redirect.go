@@ -17,6 +17,7 @@ import (
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/firewall"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/dump"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
@@ -252,16 +253,15 @@ func (r *Redirect) Run(ctx context.Context) error {
 			l.Info("Start xsk group")
 
 			// TODO: use option vec size
-			dataVec := make([][]byte, 64)
-			for i := range dataVec {
-				dataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
-			}
-			// For tx data vec, avoid tx slice alloc
-			txDataVec := make([][]byte, 64)
-
-			pkts := make([]*handle.PacketData, 64)
-			for i := range pkts {
-				pkts[i] = &handle.PacketData{Data: dataVec[i], Len: xdp.UmemDefaultFrameSize}
+			numRxTxData := 64
+			rxDataVec := make([][]byte, numRxTxData)
+			txDataVec := make([][]byte, numRxTxData)
+			tmpTxDataVec := make([][]byte, numRxTxData)
+			pkts := make([]*packets.Packet, numRxTxData)
+			for i := 0; i < numRxTxData; i++ {
+				rxDataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
+				txDataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
+				pkts[i] = &packets.Packet{RxData: rxDataVec[i], TxData: txDataVec[i]}
 			}
 
 			for !done {
@@ -270,7 +270,12 @@ func (r *Redirect) Run(ctx context.Context) error {
 					continue
 				}
 				for _, xsk := range g.xsks {
-					r.handleXSK(xsk, dataVec, txDataVec, pkts)
+					for i := 0; i < numRxTxData; i++ {
+						pkts[i].Clear()
+						pkts[i].RxData = rxDataVec[i]
+						pkts[i].TxData = txDataVec[i][:0]
+					}
+					r.handleXSK(xsk, rxDataVec, tmpTxDataVec, pkts)
 				}
 			}
 		}(xg)
@@ -280,26 +285,28 @@ func (r *Redirect) Run(ctx context.Context) error {
 	return nil
 }
 
-func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, dataVec, txDataVec [][]byte, pkts []*handle.PacketData) {
-	n := xsk.Readv(dataVec)
+func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, rxDataVec, tmpTxDataVec [][]byte, pkts []*packets.Packet) {
+	n := xsk.Readv(rxDataVec)
 	if n == 0 {
 		return
 	}
 
-	txN := 0
+	txIdx := 0
 	for i := uint32(0); i < n; i++ {
-		for _, handle := range r.handles {
-			handle.HandlePacketData(pkts[i])
+		err := pkts[i].DecodeFromData(rxDataVec[i])
+		if err != nil {
+			continue
 		}
-		// FIXME: split rx and tx data
-		if pkts[i].Len > 0 {
-			txDataVec[txN] = pkts[i].Data[:pkts[i].Len]
-			txN++
+		for _, handle := range r.handles {
+			handle.HandlePacket(pkts[i])
+		}
+		if len(pkts[i].TxData) > 0 {
+			tmpTxDataVec[txIdx] = pkts[i].TxData
+			txIdx++
 		}
 	}
-
-	if txN > 0 {
-		xsk.Writev(txDataVec[:txN])
+	if txIdx > 0 {
+		xsk.Writev(tmpTxDataVec[:txIdx])
 	}
 }
 

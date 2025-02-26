@@ -206,6 +206,7 @@ func (x *XDPSocket) Readv(iovs [][]byte) uint32 {
 	for i := uint32(0); i < n; i++ {
 		desc := x.rx.GetDesc(idx + i)
 		copy(iovs[i], x.umem.GetData(desc))
+		iovs[i] = iovs[i][:desc.Len]
 		x.umem.FreeFrame(desc.Addr)
 
 		x.stats.RxPackets++

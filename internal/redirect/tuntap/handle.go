@@ -9,6 +9,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 )
 
@@ -126,16 +127,15 @@ func (h *TuntapHandle) handleOpDel(req *protos.TuntapReq) ([]byte, error) {
 	return []byte("{}"), nil
 }
 
-func (h *TuntapHandle) HandlePacketData(data *handle.PacketData) {
+func (h *TuntapHandle) HandlePacket(pkt *packets.Packet) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	// TODO: support vlan
 	for _, tun := range h.devices {
 		if tun.Mode == netlink.TUNTAP_MODE_TUN {
-			tun.Fds[0].Write(data.Data[14:])
+			tun.Fds[0].Write(pkt.RxData[pkt.L2Len:])
 		} else {
-			tun.Fds[0].Write(data.Data)
+			tun.Fds[0].Write(pkt.RxData)
 		}
 	}
 }

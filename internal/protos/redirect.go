@@ -98,12 +98,14 @@ var spoofTypeLookup = map[string]SpoofType{
 	SpoofTypeStr_None:          SpoofType_None,
 	SpoofTypeStr_ICMPEchoReply: SpoofType_ICMPEchoReply,
 	SpoofTypeStr_TCPReset:      SpoofType_TCPReset,
+	SpoofTypeStr_TCPResetSYN:   SpoofType_TCPResetSYN,
 }
 
 var spoofTypeStrLookup = map[SpoofType]string{
 	SpoofType_None:          SpoofTypeStr_None,
 	SpoofType_ICMPEchoReply: SpoofTypeStr_ICMPEchoReply,
 	SpoofType_TCPReset:      SpoofTypeStr_TCPReset,
+	SpoofType_TCPResetSYN:   SpoofTypeStr_TCPResetSYN,
 }
 
 func (t SpoofType) String() string { return spoofTypeStrLookup[t] }

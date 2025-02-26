@@ -147,7 +147,7 @@ static stauts_t make_packet(struct packet *pkt, void *data, void *data_end)
     // L2
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end)
-        return OK;
+        return INVALID_DATA_LENGTH;
 
     __be16 eth_type = bpf_ntohs(eth->h_proto);
     __be16 off = sizeof(*eth);

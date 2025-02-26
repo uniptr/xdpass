@@ -6,14 +6,19 @@ import (
 	"net"
 	"sync"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/kentik/patricia"
 	"github.com/kentik/patricia/uint32_tree"
 	"github.com/sirupsen/logrus"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
+	"golang.org/x/sys/unix"
+)
+
+const (
+	ICMPv4TypeEchoRequest = 0x8
+	ICMPv4TypeEchoReply   = 0x0
 )
 
 type SpoofHandle struct {
@@ -83,9 +88,11 @@ func (h *SpoofHandle) handleOpList(*protos.SpoofReq) ([]byte, error) {
 }
 
 func (h *SpoofHandle) handleOpListTypes(*protos.SpoofReq) ([]byte, error) {
-	resp := protos.SpoofResp{Rules: []protos.SpoofRule{{
-		SpoofType: protos.SpoofType_ICMPEchoReply,
-	}}}
+	resp := protos.SpoofResp{Rules: []protos.SpoofRule{
+		{SpoofType: protos.SpoofType_ICMPEchoReply},
+		{SpoofType: protos.SpoofType_TCPReset},
+		{SpoofType: protos.SpoofType_TCPResetSYN},
+	}}
 	return json.Marshal(resp)
 }
 
@@ -152,39 +159,47 @@ func (h *SpoofHandle) handleOpDel(req *protos.SpoofReq) ([]byte, error) {
 	return []byte("{}"), nil
 }
 
-func (h *SpoofHandle) HandlePacketData(data *handle.PacketData) {
-	data.Len = 0
+func (h *SpoofHandle) HandlePacket(pkt *packets.Packet) {
+	if logrus.GetLevel() >= logrus.DebugLevel {
+		logrus.WithFields(logrus.Fields{
+			"l3_proto": pkt.L3Proto,
+			"l4_proto": pkt.L4Proto,
+			"src_ip":   packets.IPv4FromUint32(pkt.SrcIP),
+			"dst_ip":   packets.IPv4FromUint32(pkt.DstIP),
+			"src_port": pkt.SrcPort,
+			"dst_port": pkt.DstPort,
+		}).Debug("Handle packet")
+	}
 
-	var eth layers.Ethernet
-	err := eth.DecodeFromBytes(data.Data, gopacket.NilDecodeFeedback)
-	if err != nil {
+	var err error
+	switch pkt.L3Proto {
+	case unix.ETH_P_IP:
+		err = h.handlePacketIPv4(pkt)
+	case unix.ETH_P_IPV6:
+		err = h.handlePacketIPv6(pkt)
+	default:
 		return
 	}
-
-	switch eth.EthernetType {
-	case layers.EthernetTypeIPv4:
-		err = h.handlePacketIPv4(data, &eth)
-	}
-
 	if err != nil {
 		logrus.WithError(err).Error("Handle packet error")
 	}
 }
 
-func (h *SpoofHandle) handlePacketIPv4(data *handle.PacketData, eth *layers.Ethernet) error {
-	var ip layers.IPv4
-	err := ip.DecodeFromBytes(eth.Payload, gopacket.NilDecodeFeedback)
-	if err != nil {
-		return err
+func (h *SpoofHandle) handlePacketIPv4(pkt *packets.Packet) error {
+	switch pkt.L4Proto {
+	case unix.IPPROTO_ICMP:
+		return h.handlePacketICMPv4(pkt)
+	case unix.IPPROTO_TCP:
+		return h.handlePacketTCP(pkt)
+	case unix.IPPROTO_UDP:
+		return h.handlePacketUDP(pkt)
+	default:
+		return packets.ErrPacketInvalidProtocol
 	}
+}
 
-	switch ip.Protocol {
-	case layers.IPProtocolICMPv4:
-		return h.handlePacketICMPv4(data, eth, &ip)
-	case layers.IPProtocolTCP:
-		return h.handlePacketTCP(data, eth, &ip)
-	}
-
+func (h *SpoofHandle) handlePacketIPv6(*packets.Packet) error {
+	// TODO: add ipv6 implement
 	return nil
 }
 
@@ -246,19 +261,13 @@ func (h *SpoofHandle) getIDByIPAddrPort(sip, dip patricia.IPv4Address, sport, dp
 	return 0
 }
 
-func (h *SpoofHandle) handlePacketICMPv4(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4) error {
-	var icmpv4 layers.ICMPv4
-	err := icmpv4.DecodeFromBytes(ip.Payload, gopacket.NilDecodeFeedback)
-	if err != nil {
-		return err
-	}
-
+func (h *SpoofHandle) handlePacketICMPv4(pkt *packets.Packet) error {
 	var (
 		rule protos.SpoofRule
 		ok   bool
 	)
 	h.mu.RLock()
-	id := h.getIDByIP(ip.SrcIP, ip.DstIP)
+	id := h.getIDByIPAddr(patricia.NewIPv4Address(pkt.SrcIP, 32), patricia.NewIPv4Address(pkt.DstIP, 32))
 	if id != 0 {
 		rule, ok = h.rules[id]
 	}
@@ -270,51 +279,71 @@ func (h *SpoofHandle) handlePacketICMPv4(data *handle.PacketData, eth *layers.Et
 		logrus.WithField("id", id).Debug("Matched rule")
 	}
 
-	if icmpv4.TypeCode.Type() != layers.ICMPv4TypeEchoRequest || rule.SpoofType != protos.SpoofType_ICMPEchoReply {
+	rxL4ICMP := pkt.GetRxICMPv4Header()
+	if rxL4ICMP.Type != ICMPv4TypeEchoRequest || rule.SpoofType != protos.SpoofType_ICMPEchoReply {
 		return nil
 	}
 
-	l2 := *eth
-	l2.SrcMAC = eth.DstMAC
-	l2.DstMAC = eth.SrcMAC
-	l2.EthernetType = eth.EthernetType
+	pkt.TxData = pkt.TxData[:packets.SizeofEthernetHeader]
 
-	l3 := *ip
-	l3.SrcIP = ip.DstIP
-	l3.DstIP = ip.SrcIP
+	// L2 Ethernet
+	rxL2Ether := pkt.GetRxEthernetHeader()
+	txL2Ether := packets.GetPtrWithType[packets.EthernetHeader](pkt.TxData, 0)
+	txL2Ether.SrcMAC = rxL2Ether.DestMAC
+	txL2Ether.DestMAC = rxL2Ether.SrcMAC
+	txL2Ether.EthernetType = rxL2Ether.EthernetType
+	txL2Len := packets.SizeofEthernetHeader
 
-	l4 := icmpv4
-	l4.TypeCode = layers.CreateICMPv4TypeCode(layers.ICMPv4TypeEchoReply, icmpv4.TypeCode.Code())
-
-	b := gopacket.NewSerializeBuffer()
-	err = gopacket.SerializeLayers(b, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}, &l2, &l3, &l4, gopacket.Payload(l4.Payload))
-	if err != nil {
-		return err
+	// L2 VLAN
+	rxL2Vlan := pkt.GetRxVLANHeader()
+	if rxL2Vlan != nil {
+		pkt.TxData = pkt.TxData[:packets.SizeofVLANHeader+packets.SizeofVLANHeader]
+		txL2Vlan := packets.GetPtrWithType[packets.VLANHeader](pkt.TxData, packets.SizeofEthernetHeader)
+		txL2Vlan.VLANID = rxL2Vlan.VLANID
+		txL2Vlan.EncapsulatedProto = rxL2Vlan.EncapsulatedProto
+		txL2Len += packets.SizeofVLANHeader
 	}
 
-	copy(data.Data, b.Bytes())
-	data.Len = len(b.Bytes())
+	// L3 IPv4
+	pkt.TxData = pkt.TxData[:txL2Len+packets.SizeofIPv4Header]
+	rxL3 := pkt.GetRxIPv4Header()
+	txL3 := packets.GetPtrWithType[packets.IPv4Header](pkt.TxData, txL2Len)
+	txL3.Proto = rxL3.Proto
+	txL3.VerHdrLen = rxL3.VerHdrLen
+	txL3.SrcIP = rxL3.DstIP
+	txL3.DstIP = rxL3.SrcIP
+	txL3.Len = uint16(txL2Len + packets.SizeofIPv4Header)
+	txL3.TTL = 78
+	txL3.Checksum = 0
+	txL3.Checksum = packets.Htons(checksum(pkt.TxData[txL2Len : txL2Len+packets.SizeofIPv4Header]))
+
+	// L4 ICMPv4
+	pkt.TxData = pkt.TxData[:txL2Len+packets.SizeofIPv4Header+packets.SizeofICMPHeader]
+	txL4ICMP := packets.GetPtrWithType[packets.ICMPHeader](pkt.TxData, int(txL2Len+packets.SizeofIPv4Header))
+	txL4ICMP.Type = ICMPv4TypeEchoReply
+	txL4ICMP.Code = 0
+	txL4ICMP.ID = rxL4ICMP.ID
+	txL4ICMP.Seq = rxL4ICMP.Seq
+	txL4ICMP.Checksum = 0
+
+	// Payload
+	rxL234Len := int(pkt.L2Len + pkt.L3Len + pkt.L4Len)
+	pkt.TxData = pkt.TxData[:txL2Len+packets.SizeofIPv4Header+packets.SizeofICMPHeader+len(pkt.RxData)-rxL234Len]
+	copy(pkt.TxData[txL2Len+packets.SizeofIPv4Header+packets.SizeofICMPHeader:], pkt.RxData[rxL234Len:])
+
+	// L4 ICMPv4 checksum
+	txL4ICMP.Checksum = packets.Htons(tcpipChecksum(pkt.TxData[txL2Len+packets.SizeofIPv4Header:txL2Len+packets.SizeofIPv4Header+packets.SizeofICMPHeader+len(pkt.TxData)-rxL234Len], 0))
+
 	return nil
 }
 
-func (h *SpoofHandle) handlePacketTCP(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4) error {
-	var tcp layers.TCP
-	err := tcp.DecodeFromBytes(ip.Payload, gopacket.NilDecodeFeedback)
-	if err != nil {
-		return err
-	}
-
+func (h *SpoofHandle) handlePacketTCP(pkt *packets.Packet) error {
 	var (
 		rule protos.SpoofRule
 		ok   bool
 	)
 	h.mu.RLock()
-	id := h.getIDByIPAddrPort(
-		patricia.NewIPv4Address(binary.BigEndian.Uint32(ip.SrcIP), 32),
-		patricia.NewIPv4Address(binary.BigEndian.Uint32(ip.DstIP), 32),
-		uint16(tcp.SrcPort),
-		uint16(tcp.DstPort),
-	)
+	id := h.getIDByIPAddrPort(patricia.NewIPv4Address(pkt.SrcIP, 32), patricia.NewIPv4Address(pkt.DstIP, 32), pkt.SrcPort, pkt.DstPort)
 	if id != 0 {
 		rule, ok = h.rules[id]
 	}
@@ -327,40 +356,114 @@ func (h *SpoofHandle) handlePacketTCP(data *handle.PacketData, eth *layers.Ether
 	}
 
 	if rule.SpoofType == protos.SpoofType_TCPReset {
-		return h.handlePacketTCPReset(data, eth, ip, &tcp)
-	} else if rule.SpoofType == protos.SpoofType_TCPResetSYN && tcp.SYN {
-		return h.handlePacketTCPReset(data, eth, ip, &tcp)
+		return h.handlePacketTCPReset(pkt)
+	} else if rule.SpoofType == protos.SpoofType_TCPResetSYN && pkt.GetRxTCPHeader().Flags.Has(packets.TCPFlagSYN) {
+		return h.handlePacketTCPReset(pkt)
 	}
 	return nil
 }
 
-func (h *SpoofHandle) handlePacketTCPReset(data *handle.PacketData, eth *layers.Ethernet, ip *layers.IPv4, tcp *layers.TCP) error {
-	l2 := *eth
-	l2.SrcMAC = eth.DstMAC
-	l2.DstMAC = eth.SrcMAC
-	l2.EthernetType = eth.EthernetType
+func (h *SpoofHandle) handlePacketTCPReset(pkt *packets.Packet) error {
+	pkt.TxData = pkt.TxData[:packets.SizeofEthernetHeader]
 
-	l3 := *ip
-	l3.SrcIP = ip.DstIP
-	l3.DstIP = ip.SrcIP
-	l3.TTL = 78
+	// L2 Ethernet
+	rxL2Ether := pkt.GetRxEthernetHeader()
+	txL2Ether := packets.GetPtrWithType[packets.EthernetHeader](pkt.TxData, 0)
+	txL2Ether.SrcMAC = rxL2Ether.DestMAC
+	txL2Ether.DestMAC = rxL2Ether.SrcMAC
+	txL2Ether.EthernetType = rxL2Ether.EthernetType
+	txL2Len := packets.SizeofEthernetHeader
 
-	l4 := layers.TCP{
-		SrcPort: tcp.DstPort,
-		DstPort: tcp.SrcPort,
-		Ack:     tcp.Seq + 1,
-		RST:     true,
-		ACK:     true,
-	}
-	l4.SetNetworkLayerForChecksum(&l3)
-
-	b := gopacket.NewSerializeBuffer()
-	err := gopacket.SerializeLayers(b, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}, &l2, &l3, &l4, gopacket.Payload(l4.Payload))
-	if err != nil {
-		return err
+	// L2 VLAN
+	rxL2Vlan := pkt.GetRxVLANHeader()
+	if rxL2Vlan != nil {
+		pkt.TxData = pkt.TxData[:packets.SizeofVLANHeader+packets.SizeofVLANHeader]
+		txL2Vlan := packets.GetPtrWithType[packets.VLANHeader](pkt.TxData, packets.SizeofEthernetHeader)
+		txL2Vlan.VLANID = rxL2Vlan.VLANID
+		txL2Vlan.EncapsulatedProto = rxL2Vlan.EncapsulatedProto
+		txL2Len += packets.SizeofVLANHeader
 	}
 
-	copy(data.Data, b.Bytes())
-	data.Len = len(b.Bytes())
+	// L3 IPv4
+	pkt.TxData = pkt.TxData[:txL2Len+packets.SizeofIPv4Header]
+	rxL3 := pkt.GetRxIPv4Header()
+	txL3 := packets.GetPtrWithType[packets.IPv4Header](pkt.TxData, txL2Len)
+	txL3.Proto = rxL3.Proto
+	txL3.VerHdrLen = rxL3.VerHdrLen
+	txL3.SrcIP = rxL3.DstIP
+	txL3.DstIP = rxL3.SrcIP
+	txL3.Len = packets.Htons(uint16(packets.SizeofIPv4Header + packets.SizeofTCPHeader))
+	txL3.TTL = 78
+	txL3.Checksum = 0
+	txL3.Checksum = packets.Htons(checksum(pkt.TxData[txL2Len : txL2Len+packets.SizeofIPv4Header]))
+
+	// L4 TCP
+	pkt.TxData = pkt.TxData[:txL2Len+packets.SizeofIPv4Header+packets.SizeofTCPHeader]
+	rxL4TCP := pkt.GetRxTCPHeader()
+	txL4TCP := packets.GetPtrWithType[packets.TCPHeader](pkt.TxData, int(txL2Len+packets.SizeofIPv4Header))
+	txL4TCP.SrcPort = rxL4TCP.DstPort
+	txL4TCP.DstPort = rxL4TCP.SrcPort
+	txL4TCP.AckSeq = packets.Htonl(packets.Ntohl(rxL4TCP.Seq) + 1)
+	txL4TCP.DataOff = 90
+	txL4TCP.Flags.Clear(packets.TCPFlagsMask)
+	txL4TCP.Flags.Set(packets.TCPFlagRST)
+	txL4TCP.Flags.Set(packets.TCPFlagACK)
+
+	// Checksum
+	csum := rxL3.PseudoHeaderChecksum()
+	csum += unix.IPPROTO_TCP
+	csum += uint32(20) & 0xffff
+	csum += uint32(20) >> 16
+	txL4TCP.Check = 0
+	txL4TCP.Check = packets.Htons(tcpipChecksum(pkt.TxData[txL2Len+packets.SizeofIPv4Header:txL2Len+packets.SizeofIPv4Header+packets.SizeofTCPHeader], csum))
+
 	return nil
+}
+
+func (h *SpoofHandle) handlePacketUDP(*packets.Packet) error {
+	// TODO: add udp implement
+	return nil
+}
+
+func checksum(bytes []byte) uint16 {
+	// Clear checksum bytes
+	bytes[10] = 0
+	bytes[11] = 0
+
+	// Compute checksum
+	var csum uint32
+	for i := 0; i < len(bytes); i += 2 {
+		csum += uint32(bytes[i]) << 8
+		csum += uint32(bytes[i+1])
+	}
+	for {
+		// Break when sum is less or equals to 0xFFFF
+		if csum <= 65535 {
+			break
+		}
+		// Add carry to the sum
+		csum = (csum >> 16) + uint32(uint16(csum))
+	}
+	// Flip all the bits
+	return ^uint16(csum)
+}
+
+func tcpipChecksum(data []byte, csum uint32) uint16 {
+	// to handle odd lengths, we loop to length - 1, incrementing by 2, then
+	// handle the last byte specifically by checking against the original
+	// length.
+	length := len(data) - 1
+	for i := 0; i < length; i += 2 {
+		// For our test packet, doing this manually is about 25% faster
+		// (740 ns vs. 1000ns) than doing it by calling binary.BigEndian.Uint16.
+		csum += uint32(data[i]) << 8
+		csum += uint32(data[i+1])
+	}
+	if len(data)%2 == 1 {
+		csum += uint32(data[length]) << 8
+	}
+	for csum > 0xffff {
+		csum = (csum >> 16) + (csum & 0xffff)
+	}
+	return ^uint16(csum)
 }

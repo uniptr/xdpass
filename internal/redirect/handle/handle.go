@@ -5,17 +5,13 @@ import (
 
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/internal/protos/packets"
 )
-
-type PacketData struct {
-	Data []byte
-	Len  int
-}
 
 type RedirectHandle interface {
 	RedirectType() protos.RedirectType
 	HandleReqData(client *commands.MessageClient, req []byte) error
-	HandlePacketData(*PacketData)
+	HandlePacket(pkt *packets.Packet)
 	Close() error
 }
 
