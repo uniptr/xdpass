@@ -56,7 +56,13 @@ type TCP struct {
 	UrgPtr  uint16
 }
 
-func (tcp *TCP) HeaderLen() int { return int((tcp.DataOff&0xf0)>>4) * 4 }
+func (tcp *TCP) HeaderLen() int {
+	return int((tcp.DataOff&0xf0)>>4) * 4
+}
+
+func (tcp *TCP) SetHeaderLen(headerLen int) {
+	tcp.DataOff = (uint8(headerLen/4) << 4) | (tcp.DataOff & 0x0f)
+}
 
 func (tcp *TCP) ComputeChecksum(ipPseudoChecksum uint32, payloadLen int) uint16 {
 	tcpAndPayloadLen := tcp.HeaderLen() + payloadLen

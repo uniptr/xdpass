@@ -40,7 +40,14 @@ type IPv4 struct {
 	DstIP     uint32 // destination ip
 }
 
-func (ip *IPv4) HeaderLen() int { return int((ip.VerHdrLen & 0x0F) * 4) }
+func (ip *IPv4) HeaderLen() int {
+	return int((ip.VerHdrLen & 0x0f) * 4)
+}
+
+func (ip *IPv4) SetHeaderLen(headerLen int) {
+	// IPv4 version is 4 in high 4 bit
+	ip.VerHdrLen = (0x40 & 0xf0) | uint8(headerLen/4)
+}
 
 // ComputeChecksum must be called after the header is filled
 func (ip *IPv4) ComputeChecksum() uint16 {

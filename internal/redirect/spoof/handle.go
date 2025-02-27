@@ -310,8 +310,8 @@ func (h *SpoofHandle) handlePacketICMPv4(pkt *fastpkt.Packet) error {
 	pkt.TxData = pkt.TxData[:txL2Len+fastpkt.SizeofIPv4]
 
 	txIPv4 := fastpkt.DataPtrIPv4(pkt.TxData, txL2Len)
+	txIPv4.SetHeaderLen(fastpkt.SizeofIPv4)
 	txIPv4.Protocol = rxIPv4.Protocol
-	txIPv4.VerHdrLen = rxIPv4.VerHdrLen
 	txIPv4.SrcIP = rxIPv4.DstIP
 	txIPv4.DstIP = rxIPv4.SrcIP
 	txIPv4.ID = rxIPv4.ID
@@ -392,8 +392,8 @@ func (h *SpoofHandle) handlePacketTCPReset(pkt *fastpkt.Packet) error {
 	pkt.TxData = pkt.TxData[:txL2Len+fastpkt.SizeofIPv4]
 
 	txIPv4 := fastpkt.DataPtrIPv4(pkt.TxData, txL2Len)
+	txIPv4.SetHeaderLen(fastpkt.SizeofIPv4)
 	txIPv4.Protocol = rxIPv4.Protocol
-	txIPv4.VerHdrLen = rxIPv4.VerHdrLen
 	txIPv4.SrcIP = rxIPv4.DstIP
 	txIPv4.DstIP = rxIPv4.SrcIP
 	txIPv4.ID = rxIPv4.ID
@@ -407,10 +407,10 @@ func (h *SpoofHandle) handlePacketTCPReset(pkt *fastpkt.Packet) error {
 	txTCP.SrcPort = rxTCP.DstPort
 	txTCP.DstPort = rxTCP.SrcPort
 	txTCP.AckSeq = netutil.Htonl(netutil.Ntohl(rxTCP.Seq) + 1)
-	txTCP.DataOff = 90
 	txTCP.Flags.Clear(fastpkt.TCPFlagsMask)
 	txTCP.Flags.Set(fastpkt.TCPFlagRST)
 	txTCP.Flags.Set(fastpkt.TCPFlagACK)
+	txTCP.SetHeaderLen(fastpkt.SizeofTCP)
 
 	// Checksum
 	txTCP.ComputeChecksum(rxIPv4.PseudoChecksum(), 0)
