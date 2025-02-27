@@ -1,4 +1,4 @@
-package packets
+package fastpkt
 
 import (
 	"net"
@@ -7,17 +7,18 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/stretchr/testify/assert"
+	"github.com/zxhio/xdpass/pkg/netutil"
 	"golang.org/x/sys/unix"
 )
 
 var (
-	eth = layers.Ethernet{
+	testLayerEth = layers.Ethernet{
 		DstMAC:       net.HardwareAddr{22, 70, 177, 58, 175, 3},
 		SrcMAC:       net.HardwareAddr{86, 102, 96, 15, 235, 58},
 		EthernetType: layers.EthernetTypeIPv4,
 	}
 
-	ipv4 = layers.IPv4{
+	testLayerIPv4 = layers.IPv4{
 		Version: 4,
 		SrcIP:   net.IPv4(172, 16, 23, 2),
 		DstIP:   net.IPv4(172, 16, 23, 1),
@@ -48,38 +49,38 @@ func TestDecodePacketInvalid(t *testing.T) {
 }
 
 func TestDecodePacketVLAN(t *testing.T) {
-	eth.EthernetType = unix.ETH_P_8021Q
+	testLayerEth.EthernetType = layers.EthernetTypeDot1Q
 	vlan := layers.Dot1Q{VLANIdentifier: 10, Type: layers.EthernetTypeIPv4}
-	ipv4.Protocol = layers.IPProtocolICMPv4
+	testLayerIPv4.Protocol = layers.IPProtocolICMPv4
 	icmp := layers.ICMPv4{TypeCode: layers.ICMPv4TypeEchoRequest}
 
-	pkt, err := serializeAndDecode(&eth, &vlan, &ipv4, &icmp)
+	pkt, err := serializeAndDecode(&testLayerEth, &vlan, &testLayerIPv4, &icmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	assert.Equal(t, uint16(unix.ETH_P_IP), pkt.L3Proto)
 	assert.Equal(t, uint16(unix.IPPROTO_ICMP), pkt.L4Proto)
-	assert.Equal(t, true, IPv4FromUint32(pkt.SrcIP).Equal(ipv4.SrcIP.To4()))
-	assert.Equal(t, true, IPv4FromUint32(pkt.DstIP).Equal(ipv4.DstIP.To4()))
+	assert.Equal(t, true, netutil.Uint32ToIPv4(pkt.SrcIP).Equal(testLayerIPv4.SrcIP.To4()))
+	assert.Equal(t, true, netutil.Uint32ToIPv4(pkt.DstIP).Equal(testLayerIPv4.DstIP.To4()))
 	assert.Equal(t, uint16(0), pkt.SrcPort)
 	assert.Equal(t, uint16(0), pkt.DstPort)
-	assert.Equal(t, uint8(SizeofEthernetHeader+SizeofVLANHeader), pkt.L2Len)
-	assert.Equal(t, uint8(SizeofIPv4Header), pkt.L3Len)
-	assert.Equal(t, uint8(SizeofICMPHeader), pkt.L4Len)
+	assert.Equal(t, uint8(SizeofEthernet+SizeofVLAN), pkt.L2Len)
+	assert.Equal(t, uint8(SizeofIPv4), pkt.L3Len)
+	assert.Equal(t, uint8(SizeofICMP), pkt.L4Len)
 }
 
 func TestDecodePacketTCP(t *testing.T) {
-	eth.EthernetType = layers.EthernetTypeIPv4
-	ipv4.Protocol = layers.IPProtocolTCP
+	testLayerEth.EthernetType = layers.EthernetTypeIPv4
+	testLayerIPv4.Protocol = layers.IPProtocolTCP
 	tcp := layers.TCP{SrcPort: 54213, DstPort: 80}
 	tcp.Options = append(tcp.Options, layers.TCPOption{
 		OptionType: layers.TCPOptionKindMSS,
 		OptionData: []byte{5, 0, 0, 0},
 	})
-	tcp.SetNetworkLayerForChecksum(&ipv4)
+	tcp.SetNetworkLayerForChecksum(&testLayerIPv4)
 
-	pkt, err := serializeAndDecode(&eth, &ipv4, &tcp)
+	pkt, err := serializeAndDecode(&testLayerEth, &testLayerIPv4, &tcp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,16 +89,16 @@ func TestDecodePacketTCP(t *testing.T) {
 	assert.Equal(t, uint16(unix.IPPROTO_TCP), pkt.L4Proto)
 	assert.Equal(t, uint16(54213), pkt.SrcPort)
 	assert.Equal(t, uint16(80), pkt.DstPort)
-	assert.Equal(t, uint8(SizeofTCPHeader+8), pkt.L4Len)
+	assert.Equal(t, uint8(SizeofTCP+8), pkt.L4Len)
 }
 
 func TestDecodePacketUDP(t *testing.T) {
-	eth.EthernetType = layers.EthernetTypeIPv4
-	ipv4.Protocol = layers.IPProtocolUDP
+	testLayerEth.EthernetType = layers.EthernetTypeIPv4
+	testLayerIPv4.Protocol = layers.IPProtocolUDP
 	udp := layers.UDP{SrcPort: 12345, DstPort: 8080}
-	udp.SetNetworkLayerForChecksum(&ipv4)
+	udp.SetNetworkLayerForChecksum(&testLayerIPv4)
 
-	pkt, err := serializeAndDecode(&eth, &ipv4, &udp)
+	pkt, err := serializeAndDecode(&testLayerEth, &testLayerIPv4, &udp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,15 +106,15 @@ func TestDecodePacketUDP(t *testing.T) {
 	assert.Equal(t, uint16(unix.IPPROTO_UDP), pkt.L4Proto)
 	assert.Equal(t, uint16(12345), pkt.SrcPort)
 	assert.Equal(t, uint16(8080), pkt.DstPort)
-	assert.Equal(t, uint8(SizeofUDPHeader), pkt.L4Len)
+	assert.Equal(t, uint8(SizeofUDP), pkt.L4Len)
 }
 
 func TestDecodePacketICMP(t *testing.T) {
-	eth.EthernetType = layers.EthernetTypeIPv4
-	ipv4.Protocol = layers.IPProtocolICMPv4
+	testLayerEth.EthernetType = layers.EthernetTypeIPv4
+	testLayerIPv4.Protocol = layers.IPProtocolICMPv4
 	icmp := layers.ICMPv4{TypeCode: layers.ICMPv4TypeEchoRequest}
 
-	pkt, err := serializeAndDecode(&eth, &ipv4, &icmp)
+	pkt, err := serializeAndDecode(&testLayerEth, &testLayerIPv4, &icmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,16 +122,16 @@ func TestDecodePacketICMP(t *testing.T) {
 	assert.Equal(t, uint16(unix.IPPROTO_ICMP), pkt.L4Proto)
 	assert.Equal(t, uint16(0), pkt.SrcPort)
 	assert.Equal(t, uint16(0), pkt.DstPort)
-	assert.Equal(t, uint8(SizeofICMPHeader), pkt.L4Len)
+	assert.Equal(t, uint8(SizeofICMP), pkt.L4Len)
 }
 
 func BenchmarkDecodePacket(b *testing.B) {
-	eth.EthernetType = layers.EthernetTypeIPv4
-	ipv4.Protocol = layers.IPProtocolTCP
+	testLayerEth.EthernetType = layers.EthernetTypeIPv4
+	testLayerIPv4.Protocol = layers.IPProtocolTCP
 	tcp := layers.TCP{SrcPort: 54213, DstPort: 80}
-	tcp.SetNetworkLayerForChecksum(&ipv4)
+	tcp.SetNetworkLayerForChecksum(&testLayerIPv4)
 
-	data, err := serialize(&eth, &ipv4, &tcp)
+	data, err := serialize(&testLayerEth, &testLayerIPv4, &tcp)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -148,11 +149,11 @@ func BenchmarkDecodePacket(b *testing.B) {
 }
 
 func BenchmarkDecodePacketByGoPacket(b *testing.B) {
-	ipv4.Protocol = layers.IPProtocolTCP
+	testLayerIPv4.Protocol = layers.IPProtocolTCP
 	tcp := layers.TCP{SrcPort: 54213, DstPort: 80}
-	tcp.SetNetworkLayerForChecksum(&ipv4)
+	tcp.SetNetworkLayerForChecksum(&testLayerIPv4)
 
-	data, err := serialize(&eth, &ipv4, &tcp)
+	data, err := serialize(&testLayerEth, &testLayerIPv4, &tcp)
 	if err != nil {
 		b.Fatal(err)
 	}

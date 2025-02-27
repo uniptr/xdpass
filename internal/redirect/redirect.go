@@ -17,11 +17,11 @@ import (
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/firewall"
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/dump"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
 	"github.com/zxhio/xdpass/internal/redirect/tuntap"
+	"github.com/zxhio/xdpass/pkg/fastpkt"
 	"github.com/zxhio/xdpass/pkg/humanize"
 	"github.com/zxhio/xdpass/pkg/netutil"
 	"github.com/zxhio/xdpass/pkg/utils"
@@ -257,11 +257,11 @@ func (r *Redirect) Run(ctx context.Context) error {
 			rxDataVec := make([][]byte, numRxTxData)
 			txDataVec := make([][]byte, numRxTxData)
 			tmpTxDataVec := make([][]byte, numRxTxData)
-			pkts := make([]*packets.Packet, numRxTxData)
+			pkts := make([]*fastpkt.Packet, numRxTxData)
 			for i := 0; i < numRxTxData; i++ {
 				rxDataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
 				txDataVec[i] = make([]byte, xdp.UmemDefaultFrameSize)
-				pkts[i] = &packets.Packet{RxData: rxDataVec[i], TxData: txDataVec[i]}
+				pkts[i] = &fastpkt.Packet{RxData: rxDataVec[i], TxData: txDataVec[i]}
 			}
 
 			for !done {
@@ -285,7 +285,7 @@ func (r *Redirect) Run(ctx context.Context) error {
 	return nil
 }
 
-func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, rxDataVec, tmpTxDataVec [][]byte, pkts []*packets.Packet) {
+func (r *Redirect) handleXSK(xsk *xdp.XDPSocket, rxDataVec, tmpTxDataVec [][]byte, pkts []*fastpkt.Packet) {
 	n := xsk.Readv(rxDataVec)
 	if n == 0 {
 		return

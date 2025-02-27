@@ -5,13 +5,13 @@ import (
 
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/protos/packets"
+	"github.com/zxhio/xdpass/pkg/fastpkt"
 )
 
 type RedirectHandle interface {
 	RedirectType() protos.RedirectType
 	HandleReqData(client *commands.MessageClient, req []byte) error
-	HandlePacket(pkt *packets.Packet)
+	HandlePacket(pkt *fastpkt.Packet)
 	Close() error
 }
 

@@ -9,8 +9,8 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
+	"github.com/zxhio/xdpass/pkg/fastpkt"
 )
 
 type TuntapHandle struct {
@@ -127,7 +127,7 @@ func (h *TuntapHandle) handleOpDel(req *protos.TuntapReq) ([]byte, error) {
 	return []byte("{}"), nil
 }
 
-func (h *TuntapHandle) HandlePacket(pkt *packets.Packet) {
+func (h *TuntapHandle) HandlePacket(pkt *fastpkt.Packet) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 

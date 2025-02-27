@@ -9,8 +9,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
+	"github.com/zxhio/xdpass/pkg/fastpkt"
 )
 
 type DumpHandle struct {
@@ -82,7 +82,7 @@ func (h *DumpHandle) HandleReqData(client *commands.MessageClient, data []byte) 
 	}
 }
 
-func (h *DumpHandle) HandlePacket(data *packets.Packet) {
+func (h *DumpHandle) HandlePacket(data *fastpkt.Packet) {
 	if atomic.LoadUint32(&h.connected) == 0 {
 		return
 	}

@@ -2,8 +2,8 @@ package remote
 
 import (
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/protos/packets"
 	"github.com/zxhio/xdpass/internal/redirect/handle"
+	"github.com/zxhio/xdpass/pkg/fastpkt"
 )
 
 type RemoteHandle struct{}
@@ -24,5 +24,5 @@ func (h *RemoteHandle) HandleReqData([]byte) ([]byte, error) {
 	return nil, protos.ErrNotImpl
 }
 
-func (h *RemoteHandle) HandlePacket(pkt *packets.Packet) {
+func (h *RemoteHandle) HandlePacket(pkt *fastpkt.Packet) {
 }
