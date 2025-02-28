@@ -11,7 +11,7 @@ import (
 
 func TestIPv4Checksum(t *testing.T) {
 	testCases := []struct {
-		headerLen int
+		headerLen uint8
 		options   []layers.IPv4Option
 	}{
 		{
@@ -53,14 +53,14 @@ func TestIPv4Checksum(t *testing.T) {
 
 		// Based on gopacket
 		pkt := gopacket.NewPacket(buf, layers.LayerTypeIPv4, gopacket.Default)
-		csum := DataPtrIPv4(buf, 0).ComputeChecksum()
+		csum := DataPtrIPv4(buf, 0).ComputeChecksum(0)
 		assert.Equal(t, pkt.Layers()[0].(*layers.IPv4).Checksum, netutil.Htons(csum))
 
 		// Check HeaderLen
 		assert.Equal(t, testCase.headerLen, DataPtrIPv4(buf, 0).HeaderLen())
+
 		// Check SetHeaderLen
 		DataPtrIPv4(buf, 0).SetHeaderLen(testCase.headerLen)
-		assert.Equal(t, int(pkt.Layers()[0].(*layers.IPv4).IHL)*4, DataPtrIPv4(buf, 0).HeaderLen())
-
+		assert.Equal(t, pkt.Layers()[0].(*layers.IPv4).IHL*4, DataPtrIPv4(buf, 0).HeaderLen())
 	}
 }

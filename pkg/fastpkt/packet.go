@@ -162,3 +162,51 @@ func NewPacket(data []byte) (*Packet, error) {
 	pkt := &Packet{}
 	return pkt, pkt.DecodeFromData(data)
 }
+
+type UncheckedBuffer struct {
+	buf   []byte
+	start int
+}
+
+// NewUncheckedBuffer
+// return value instead of pointer, in order to avoid memory allocation
+func NewUncheckedBuffer(data []byte) UncheckedBuffer {
+	return UncheckedBuffer{buf: data[:cap(data)], start: cap(data)}
+}
+
+func (b *UncheckedBuffer) Bytes() []byte {
+	return b.buf[b.start:]
+}
+
+func (b *UncheckedBuffer) Len() int {
+	return len(b.buf) - b.start
+}
+
+func (b *UncheckedBuffer) AllocatePayload(n int) []byte {
+	b.start -= n
+	return b.buf[b.start:]
+}
+
+func (b *UncheckedBuffer) AllocateEthernet() *Ethernet {
+	return DataPtrEthernet(b.AllocatePayload(SizeofEthernet), 0)
+}
+
+func (b *UncheckedBuffer) AllocateVLAN() *VLAN {
+	return DataPtrVLAN(b.AllocatePayload(SizeofVLAN), 0)
+}
+
+func (b *UncheckedBuffer) AllocateIPv4() *IPv4 {
+	return DataPtrIPv4(b.AllocatePayload(SizeofIPv4), 0)
+}
+
+func (b *UncheckedBuffer) AllocateTCP() *TCP {
+	return DataPtrTCP(b.AllocatePayload(SizeofTCP), 0)
+}
+
+func (b *UncheckedBuffer) AllocateUDP() *UDP {
+	return DataPtrUDP(b.AllocatePayload(SizeofUDP), 0)
+}
+
+func (b *UncheckedBuffer) AllocateICMP() *ICMP {
+	return DataPtrICMP(b.AllocatePayload(SizeofICMP), 0)
+}

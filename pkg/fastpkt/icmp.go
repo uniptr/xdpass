@@ -35,8 +35,8 @@ type ICMP struct {
 	Seq uint16
 }
 
-func (icmp *ICMP) ComputeChecksum(payloadLen int) uint16 {
-	data := unsafe.Slice((*byte)(unsafe.Pointer(icmp)), SizeofICMP+payloadLen)
+func (icmp *ICMP) ComputeChecksum(payloadLen uint16) uint16 {
+	data := unsafe.Slice((*byte)(unsafe.Pointer(icmp)), SizeofICMP+int(payloadLen))
 	icmp.Checksum = 0
 	icmp.Checksum = netutil.Htons(tcpipChecksum(data, 0))
 	return icmp.Checksum

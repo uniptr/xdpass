@@ -185,7 +185,13 @@ func (h *SpoofHandle) handlePacketIPv6(*fastpkt.Packet) error {
 }
 
 func (h *SpoofHandle) handlePacketICMPv4(pkt *fastpkt.Packet) error {
-	rxICMP := fastpkt.DataPtrICMP(pkt.RxData, int(pkt.L2Len+pkt.L3Len))
+	var (
+		rxEther = fastpkt.DataPtrEthernet(pkt.RxData, 0)
+		rxIPv4  = fastpkt.DataPtrIPv4(pkt.RxData, int(pkt.L2Len))
+		rxICMP  = fastpkt.DataPtrICMP(pkt.RxData, int(pkt.L2Len+pkt.L3Len))
+		buf     = fastpkt.NewUncheckedBuffer(pkt.TxData)
+	)
+
 	if rxICMP.Type != ICMPv4TypeEchoRequest {
 		return nil
 	}
@@ -211,58 +217,46 @@ func (h *SpoofHandle) handlePacketICMPv4(pkt *fastpkt.Packet) error {
 		return nil
 	}
 
-	// L2 Ethernet
-	rxEther := fastpkt.DataPtrEthernet(pkt.RxData, 0)
-	txL2Len := fastpkt.SizeofEthernet
-
-	pkt.TxData = pkt.TxData[:fastpkt.SizeofEthernet]
-	txEther := fastpkt.DataPtrEthernet(pkt.TxData, 0)
-	txEther.HwSource = rxEther.HwDest
-	txEther.HwDest = rxEther.HwSource
-	txEther.HwProto = rxEther.HwProto
-
-	// L2 VLAN
-	if netutil.Ntohs(rxEther.HwProto) == unix.ETH_P_8021Q {
-		rxVLAN := fastpkt.DataPtrVLAN(pkt.RxData, fastpkt.SizeofEthernet)
-		pkt.TxData = pkt.TxData[:fastpkt.SizeofVLAN+fastpkt.SizeofVLAN]
-		txVLAN := fastpkt.DataPtrVLAN(pkt.TxData, fastpkt.SizeofEthernet)
-		txVLAN.ID = rxVLAN.ID
-		txVLAN.EncapsulatedProto = rxVLAN.EncapsulatedProto
-		txL2Len += fastpkt.SizeofVLAN
-	}
-
-	// L3
-	rxIPv4 := fastpkt.DataPtrIPv4(pkt.RxData, txL2Len)
-	pkt.TxData = pkt.TxData[:txL2Len+fastpkt.SizeofIPv4]
-
-	txIPv4 := fastpkt.DataPtrIPv4(pkt.TxData, txL2Len)
-	txIPv4.SetHeaderLen(fastpkt.SizeofIPv4)
-	txIPv4.Protocol = rxIPv4.Protocol
-	txIPv4.SrcIP = rxIPv4.DstIP
-	txIPv4.DstIP = rxIPv4.SrcIP
-	txIPv4.ID = rxIPv4.ID
-	txIPv4.TTL = 78
+	// Payload
+	txPayloadLen := netutil.Ntohs(rxIPv4.Len) - uint16(rxIPv4.HeaderLen()) - uint16(fastpkt.SizeofICMP)
+	txPayload := buf.AllocatePayload(int(txPayloadLen))
+	copy(txPayload, pkt.RxData[int(pkt.L2Len)+int(pkt.L3Len)+fastpkt.SizeofICMP:])
 
 	// L4
-	pkt.TxData = pkt.TxData[:txL2Len+fastpkt.SizeofIPv4+fastpkt.SizeofICMP]
-
-	txICMP := fastpkt.DataPtrICMP(pkt.TxData, int(txL2Len+fastpkt.SizeofIPv4))
+	txICMP := buf.AllocateICMP()
 	txICMP.Type = ICMPv4TypeEchoReply
 	txICMP.Code = 0
 	txICMP.ID = rxICMP.ID
 	txICMP.Seq = rxICMP.Seq
+	txICMP.ComputeChecksum(txPayloadLen)
 
-	// Payload
-	rxPayloadLen := int(netutil.Ntohs(rxIPv4.Len)) - rxIPv4.HeaderLen() - fastpkt.SizeofICMP
-	rxL234Len := int(pkt.L2Len + pkt.L3Len + pkt.L4Len)
-	pkt.TxData = pkt.TxData[:txL2Len+fastpkt.SizeofIPv4+fastpkt.SizeofICMP+rxPayloadLen]
-	copy(pkt.TxData[txL2Len+fastpkt.SizeofIPv4+fastpkt.SizeofICMP:], pkt.RxData[rxL234Len:rxL234Len+rxPayloadLen])
+	// L3
+	txIPv4 := buf.AllocateIPv4()
+	txIPv4.SetHeaderLen(uint8(fastpkt.SizeofIPv4))
+	txIPv4.TOS = 0
+	txIPv4.ID = rxIPv4.ID
+	txIPv4.FragOff = rxIPv4.FragOff
+	txIPv4.TTL = 78
+	txIPv4.Protocol = rxIPv4.Protocol
+	txIPv4.SrcIP = rxIPv4.DstIP
+	txIPv4.DstIP = rxIPv4.SrcIP
+	txIPv4.ComputeChecksum(uint16(fastpkt.SizeofICMP) + txPayloadLen)
 
-	// Checksum
-	txICMP.ComputeChecksum(rxPayloadLen)
-	txIPv4.Len = netutil.Htons(uint16(fastpkt.SizeofIPv4 + fastpkt.SizeofICMP + rxPayloadLen))
-	txIPv4.ComputeChecksum()
+	// L2 VLAN
+	if netutil.Ntohs(rxEther.HwProto) == unix.ETH_P_8021Q {
+		rxVLAN := fastpkt.DataPtrVLAN(pkt.RxData, fastpkt.SizeofEthernet)
+		txVLAN := buf.AllocateVLAN()
+		txVLAN.ID = rxVLAN.ID
+		txVLAN.EncapsulatedProto = rxVLAN.EncapsulatedProto
+	}
 
+	// L2 Ethernet
+	txEther := buf.AllocateEthernet()
+	txEther.HwSource = rxEther.HwDest
+	txEther.HwDest = rxEther.HwSource
+	txEther.HwProto = rxEther.HwProto
+
+	pkt.TxData = buf.Bytes()
 	return nil
 }
 
@@ -294,56 +288,52 @@ func (h *SpoofHandle) handlePacketTCP(pkt *fastpkt.Packet) error {
 }
 
 func (h *SpoofHandle) handlePacketTCPReset(pkt *fastpkt.Packet) error {
-	pkt.TxData = pkt.TxData[:fastpkt.SizeofEthernet]
+	var (
+		rxEther = fastpkt.DataPtrEthernet(pkt.RxData, 0)
+		rxIPv4  = fastpkt.DataPtrIPv4(pkt.RxData, int(pkt.L2Len))
+		rxTCP   = fastpkt.DataPtrTCP(pkt.RxData, int(pkt.L2Len+pkt.L3Len))
+		buf     = fastpkt.NewUncheckedBuffer(pkt.TxData)
+	)
+
+	// L4
+	txTCP := buf.AllocateTCP()
+	txTCP.SrcPort = rxTCP.DstPort
+	txTCP.DstPort = rxTCP.SrcPort
+	txTCP.AckSeq = netutil.Htonl(netutil.Ntohl(rxTCP.Seq) + 1)
+	txTCP.SetHeaderLen(uint8(fastpkt.SizeofTCP))
+	txTCP.Flags.Clear(fastpkt.TCPFlagsMask)
+	txTCP.Flags.Set(fastpkt.TCPFlagRST | fastpkt.TCPFlagACK)
+	txTCP.Window = rxTCP.Window
+	txTCP.Check = rxTCP.Check
+
+	// L3
+	txIPv4 := buf.AllocateIPv4()
+	txIPv4.SetHeaderLen(uint8(fastpkt.SizeofIPv4))
+	txIPv4.TOS = 0
+	txIPv4.ID = rxIPv4.ID
+	txIPv4.FragOff = rxIPv4.FragOff
+	txIPv4.TTL = 78
+	txIPv4.Protocol = rxIPv4.Protocol
+	txIPv4.SrcIP = rxIPv4.DstIP
+	txIPv4.DstIP = rxIPv4.SrcIP
+	txIPv4.ComputeChecksum(uint16(fastpkt.SizeofTCP))
+	txTCP.ComputeChecksum(txIPv4.PseudoChecksum(), 0)
+
+	// L2 VLAN
+	if netutil.Ntohs(rxEther.HwProto) == unix.ETH_P_8021Q {
+		rxVLAN := fastpkt.DataPtrVLAN(pkt.RxData, fastpkt.SizeofEthernet)
+		txVLAN := buf.AllocateVLAN()
+		txVLAN.ID = rxVLAN.ID
+		txVLAN.EncapsulatedProto = rxVLAN.EncapsulatedProto
+	}
 
 	// L2 Ethernet
-	txL2Len := fastpkt.SizeofEthernet
-	rxEther := fastpkt.DataPtrEthernet(pkt.RxData, 0)
-	txEther := fastpkt.DataPtrEthernet(pkt.TxData, 0)
+	txEther := buf.AllocateEthernet()
 	txEther.HwSource = rxEther.HwDest
 	txEther.HwDest = rxEther.HwSource
 	txEther.HwProto = rxEther.HwProto
 
-	// L2 VLAN
-	if rxEther.HwProto == unix.ETH_P_8021Q {
-		rxVLAN := fastpkt.DataPtrVLAN(pkt.RxData, fastpkt.SizeofEthernet)
-		pkt.TxData = pkt.TxData[:fastpkt.SizeofVLAN+fastpkt.SizeofVLAN]
-		txVLAN := fastpkt.DataPtrVLAN(pkt.TxData, fastpkt.SizeofEthernet)
-		txVLAN.ID = rxVLAN.ID
-		txVLAN.EncapsulatedProto = rxVLAN.EncapsulatedProto
-		txL2Len += fastpkt.SizeofVLAN
-	}
-
-	// L3
-	rxIPv4 := fastpkt.DataPtrIPv4(pkt.RxData, txL2Len)
-	pkt.TxData = pkt.TxData[:txL2Len+fastpkt.SizeofIPv4]
-
-	txIPv4 := fastpkt.DataPtrIPv4(pkt.TxData, txL2Len)
-	txIPv4.SetHeaderLen(fastpkt.SizeofIPv4)
-	txIPv4.Protocol = rxIPv4.Protocol
-	txIPv4.SrcIP = rxIPv4.DstIP
-	txIPv4.DstIP = rxIPv4.SrcIP
-	txIPv4.ID = rxIPv4.ID
-	txIPv4.TTL = 78
-
-	// L4
-	pkt.TxData = pkt.TxData[:txL2Len+fastpkt.SizeofIPv4+fastpkt.SizeofTCP]
-
-	rxTCP := fastpkt.DataPtrTCP(pkt.RxData, int(txL2Len+fastpkt.SizeofIPv4))
-	txTCP := fastpkt.DataPtrTCP(pkt.TxData, int(txL2Len+fastpkt.SizeofIPv4))
-	txTCP.SrcPort = rxTCP.DstPort
-	txTCP.DstPort = rxTCP.SrcPort
-	txTCP.AckSeq = netutil.Htonl(netutil.Ntohl(rxTCP.Seq) + 1)
-	txTCP.Flags.Clear(fastpkt.TCPFlagsMask)
-	txTCP.Flags.Set(fastpkt.TCPFlagRST)
-	txTCP.Flags.Set(fastpkt.TCPFlagACK)
-	txTCP.SetHeaderLen(fastpkt.SizeofTCP)
-
-	// Checksum
-	txTCP.ComputeChecksum(rxIPv4.PseudoChecksum(), 0)
-	txIPv4.Len = netutil.Htons(uint16(fastpkt.SizeofIPv4 + fastpkt.SizeofTCP))
-	txIPv4.ComputeChecksum()
-
+	pkt.TxData = buf.Bytes()
 	return nil
 }
 
