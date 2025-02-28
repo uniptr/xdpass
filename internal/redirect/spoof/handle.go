@@ -1,13 +1,11 @@
 package spoof
 
 import (
-	"encoding/binary"
 	"encoding/json"
-	"net"
 	"sync"
 
 	"github.com/kentik/patricia"
-	"github.com/kentik/patricia/uint32_tree"
+	"github.com/kentik/patricia/generics_tree"
 	"github.com/sirupsen/logrus"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
@@ -23,23 +21,21 @@ const (
 )
 
 type SpoofHandle struct {
-	ifaceName string
-	id        uint32
-	mu        *sync.RWMutex
-	rules     map[uint32]protos.SpoofRule
-	ruleIDs   map[protos.SpoofRule]uint32
-	srcIPTrie *uint32_tree.TreeV4
-	dstIPTrie *uint32_tree.TreeV4
+	ifaceName    string
+	id           uint32
+	mu           *sync.RWMutex
+	v4RulesIDMap map[protos.SpoofRuleV4]uint32
+	v4RetRules   []protos.SpoofRuleV4                      // reuse buffer for return matched rules
+	v4DstIPTree  *generics_tree.TreeV4[protos.SpoofRuleV4] // search key is DstIP
 }
 
 func NewSpoofHandle(ifaceName string) (handle.RedirectHandle, error) {
 	return &SpoofHandle{
-		ifaceName: ifaceName,
-		mu:        &sync.RWMutex{},
-		rules:     make(map[uint32]protos.SpoofRule),
-		ruleIDs:   make(map[protos.SpoofRule]uint32),
-		srcIPTrie: uint32_tree.NewTreeV4(),
-		dstIPTrie: uint32_tree.NewTreeV4(),
+		ifaceName:    ifaceName,
+		mu:           &sync.RWMutex{},
+		v4RulesIDMap: make(map[protos.SpoofRuleV4]uint32),
+		v4RetRules:   make([]protos.SpoofRuleV4, 0, 64),
+		v4DstIPTree:  generics_tree.NewTreeV4[protos.SpoofRuleV4](),
 	}, nil
 }
 
@@ -77,11 +73,14 @@ func (h *SpoofHandle) HandleReqData(client *commands.MessageClient, data []byte)
 }
 
 func (h *SpoofHandle) handleOpList(*protos.SpoofReq) ([]byte, error) {
-	resp := protos.SpoofResp{Rules: make([]protos.SpoofRule, 0, len(h.rules))}
+	resp := protos.SpoofResp{Rules: make([]protos.SpoofRule, 0, len(h.v4RulesIDMap))}
 
 	h.mu.RLock()
-	for _, rule := range h.rules {
-		resp.Rules = append(resp.Rules, rule)
+	for rule, id := range h.v4RulesIDMap {
+		resp.Rules = append(resp.Rules, protos.SpoofRule{
+			ID:          id,
+			SpoofRuleV4: rule,
+		})
 	}
 	h.mu.RUnlock()
 
@@ -90,39 +89,29 @@ func (h *SpoofHandle) handleOpList(*protos.SpoofReq) ([]byte, error) {
 
 func (h *SpoofHandle) handleOpListTypes(*protos.SpoofReq) ([]byte, error) {
 	resp := protos.SpoofResp{Rules: []protos.SpoofRule{
-		{SpoofType: protos.SpoofType_ICMPEchoReply},
-		{SpoofType: protos.SpoofType_TCPReset},
-		{SpoofType: protos.SpoofType_TCPResetSYN},
+		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofType_ICMPEchoReply}},
+		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofType_TCPReset}},
+		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofType_TCPResetSYN}},
 	}}
 	return json.Marshal(resp)
 }
 
 func (h *SpoofHandle) handleOpAdd(req *protos.SpoofReq) ([]byte, error) {
 	for _, rule := range req.Rules {
-		l := logrus.WithFields(logrus.Fields{
-			"sip_lpm":  rule.SrcIPAddrLPM,
-			"dip_lpm":  rule.DstIPAddrLPM,
-			"src_port": rule.SrcPort,
-			"dst_port": rule.DstPort,
-			"proto":    rule.Proto,
-			"type":     rule.SpoofType,
-		})
+		l := logrus.WithField("rule", rule.String())
 
 		h.mu.RLock()
-		_, ok := h.ruleIDs[rule]
+		id, ok := h.v4RulesIDMap[rule.SpoofRuleV4]
 		h.mu.RUnlock()
 		if ok {
-			l.Debug("Add duplicate spoof rule")
+			l.WithField("id", id).Debug("Add duplicate spoof rule")
 			continue
 		}
 
 		h.mu.Lock()
 		h.id++
-		h.ruleIDs[rule] = h.id
-		rule.ID = h.id
-		h.rules[h.id] = rule
-		h.srcIPTrie.Add(rule.SrcIPAddrLPM.To4(), h.id, nil)
-		h.dstIPTrie.Add(rule.DstIPAddrLPM.To4(), h.id, nil)
+		h.v4RulesIDMap[rule.SpoofRuleV4] = h.id
+		h.v4DstIPTree.Add(patricia.NewIPv4Address(rule.SpoofRuleV4.DstIP, uint(rule.SpoofRuleV4.DstIPPrefixLen)), rule.SpoofRuleV4, nil)
 		h.mu.Unlock()
 
 		l.WithField("id", h.id).Debug("Add spoof rule")
@@ -132,29 +121,20 @@ func (h *SpoofHandle) handleOpAdd(req *protos.SpoofReq) ([]byte, error) {
 
 func (h *SpoofHandle) handleOpDel(req *protos.SpoofReq) ([]byte, error) {
 	for _, rule := range req.Rules {
-		l := logrus.WithFields(logrus.Fields{
-			"sip_lpm":  rule.SrcIPAddrLPM,
-			"dip_lpm":  rule.DstIPAddrLPM,
-			"src_port": rule.SrcPort,
-			"dst_port": rule.DstPort,
-			"proto":    rule.Proto,
-			"type":     rule.SpoofType,
-		})
+		l := logrus.WithField("rule", rule.String())
 
 		h.mu.RLock()
-		id, ok := h.ruleIDs[rule]
+		id, ok := h.v4RulesIDMap[rule.SpoofRuleV4]
 		h.mu.RUnlock()
 		if !ok {
 			l.Debug("Delete no matched spoof rule")
 			continue
 		}
-		l.WithField("id", rule.ID).Debug("Delete spoof rule")
+		l.WithField("id", id).Debug("Delete spoof rule")
 
 		h.mu.Lock()
-		delete(h.rules, id)
-		delete(h.ruleIDs, rule)
-		h.srcIPTrie.Delete(rule.SrcIPAddrLPM.To4(), func(_, _ uint32) bool { return true }, id)
-		h.dstIPTrie.Delete(rule.DstIPAddrLPM.To4(), func(_, _ uint32) bool { return true }, id)
+		delete(h.v4RulesIDMap, rule.SpoofRuleV4)
+		h.v4DstIPTree.Delete(patricia.NewIPv4Address(rule.SpoofRuleV4.DstIP, uint(rule.SpoofRuleV4.DstIPPrefixLen)), func(_, _ protos.SpoofRuleV4) bool { return true }, rule.SpoofRuleV4)
 		h.mu.Unlock()
 	}
 	return []byte("{}"), nil
@@ -204,84 +184,30 @@ func (h *SpoofHandle) handlePacketIPv6(*fastpkt.Packet) error {
 	return nil
 }
 
-func (h *SpoofHandle) getIDByIP(sip, dip net.IP) uint32 {
-	return h.getIDByIPAddr(
-		patricia.NewIPv4Address(binary.BigEndian.Uint32(sip), 32),
-		patricia.NewIPv4Address(binary.BigEndian.Uint32(dip), 32),
-	)
-}
-
-func (h *SpoofHandle) getIDByIPAddr(sip, dip patricia.IPv4Address) uint32 {
-	ok, sIDList := h.srcIPTrie.FindDeepestTags(sip)
-	if !ok {
-		return 0
-	}
-	ok, dIDList := h.dstIPTrie.FindDeepestTags(dip)
-	if !ok {
-		return 0
-	}
-	if logrus.GetLevel() == logrus.DebugLevel {
-		logrus.WithFields(logrus.Fields{
-			"sip":   sip,
-			"dip":   dip,
-			"slist": sIDList,
-			"dlist": dIDList,
-		}).Debug("Find deepest ip lpm")
-	}
-
-	for _, sID := range sIDList {
-		for _, dID := range dIDList {
-			if sID == dID {
-				return sID
-			}
-		}
-	}
-	return 0
-}
-
-func (h *SpoofHandle) getIDByIPAddrPort(sip, dip patricia.IPv4Address, sport, dport uint16) uint32 {
-	ok, sIDList := h.srcIPTrie.FindDeepestTags(sip)
-	if !ok {
-		return 0
-	}
-	ok, dIDList := h.dstIPTrie.FindDeepestTags(dip)
-	if !ok {
-		return 0
-	}
-
-	for _, sID := range sIDList {
-		for _, dID := range dIDList {
-			if sID == dID {
-				if (h.rules[sID].SrcPort == 0 || h.rules[sID].SrcPort == sport) &&
-					(h.rules[dID].DstPort == 0 || h.rules[dID].DstPort == dport) {
-					return sID
-				}
-			}
-		}
-	}
-	return 0
-}
-
 func (h *SpoofHandle) handlePacketICMPv4(pkt *fastpkt.Packet) error {
-	var (
-		rule protos.SpoofRule
-		ok   bool
-	)
-	h.mu.RLock()
-	id := h.getIDByIPAddr(patricia.NewIPv4Address(pkt.SrcIP, 32), patricia.NewIPv4Address(pkt.DstIP, 32))
-	if id != 0 {
-		rule, ok = h.rules[id]
-	}
-	h.mu.RUnlock()
-	if !ok {
+	rxICMP := fastpkt.DataPtrICMP(pkt.RxData, int(pkt.L2Len+pkt.L3Len))
+	if rxICMP.Type != ICMPv4TypeEchoRequest {
 		return nil
 	}
-	if logrus.GetLevel() == logrus.DebugLevel {
-		logrus.WithField("id", id).Debug("Matched rule")
+
+	h.mu.RLock()
+	ok, rules := matchByDstIPKey(h.v4DstIPTree, pkt, h.v4RetRules[:0])
+	h.mu.RUnlock()
+	if !ok || len(rules) == 0 {
+		return nil
 	}
 
-	rxICMP := fastpkt.DataPtrICMP(pkt.RxData, int(pkt.L2Len+pkt.L3Len))
-	if rxICMP.Type != ICMPv4TypeEchoRequest || rule.SpoofType != protos.SpoofType_ICMPEchoReply {
+	found := false
+	for _, rule := range rules {
+		if rule.SpoofType == protos.SpoofType_ICMPEchoReply {
+			if logrus.GetLevel() >= logrus.DebugLevel {
+				logrus.WithField("rule", rule.String()).Debug("Matched rule")
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
 		return nil
 	}
 
@@ -341,27 +267,28 @@ func (h *SpoofHandle) handlePacketICMPv4(pkt *fastpkt.Packet) error {
 }
 
 func (h *SpoofHandle) handlePacketTCP(pkt *fastpkt.Packet) error {
-	var (
-		rule protos.SpoofRule
-		ok   bool
-	)
 	h.mu.RLock()
-	id := h.getIDByIPAddrPort(patricia.NewIPv4Address(pkt.SrcIP, 32), patricia.NewIPv4Address(pkt.DstIP, 32), pkt.SrcPort, pkt.DstPort)
-	if id != 0 {
-		rule, ok = h.rules[id]
-	}
+	ok, rules := matchByDstIPKey(h.v4DstIPTree, pkt, h.v4RetRules[:0])
 	h.mu.RUnlock()
-	if !ok {
+	if !ok || len(rules) == 0 {
 		return nil
 	}
-	if logrus.GetLevel() == logrus.DebugLevel {
-		logrus.WithField("id", id).Debug("Matched rule")
+
+	if logrus.GetLevel() >= logrus.DebugLevel {
+		logrus.WithField("rules_count", len(rules)).Debug("Matched rules")
+		if logrus.GetLevel() >= logrus.TraceLevel {
+			for _, rule := range rules {
+				logrus.WithField("rule", rule.String()).Trace("Matched rule detail")
+			}
+		}
 	}
 
-	if rule.SpoofType == protos.SpoofType_TCPReset {
-		return h.handlePacketTCPReset(pkt)
-	} else if rule.SpoofType == protos.SpoofType_TCPResetSYN && fastpkt.DataPtrTCP(pkt.RxData, int(pkt.L2Len+pkt.L3Len)).Flags.Has(fastpkt.TCPFlagSYN) {
-		return h.handlePacketTCPReset(pkt)
+	for _, rule := range rules {
+		if rule.SpoofType == protos.SpoofType_TCPReset {
+			return h.handlePacketTCPReset(pkt)
+		} else if rule.SpoofType == protos.SpoofType_TCPResetSYN && fastpkt.DataPtrTCP(pkt.RxData, int(pkt.L2Len+pkt.L3Len)).Flags.Has(fastpkt.TCPFlagSYN) {
+			return h.handlePacketTCPReset(pkt)
+		}
 	}
 	return nil
 }
@@ -423,4 +350,25 @@ func (h *SpoofHandle) handlePacketTCPReset(pkt *fastpkt.Packet) error {
 func (h *SpoofHandle) handlePacketUDP(*fastpkt.Packet) error {
 	// TODO: add udp implement
 	return nil
+}
+
+func IPv4PrefixToUint32(addr uint32, prefixLen uint) uint32 {
+	return addr & (0xFFFFFFFF << (32 - prefixLen))
+}
+
+// matchByDstIPKey return true if matched dst ip
+func matchByDstIPKey(trie *generics_tree.TreeV4[protos.SpoofRuleV4], pkt *fastpkt.Packet, ret []protos.SpoofRuleV4) (bool, []protos.SpoofRuleV4) {
+	dstIP := patricia.NewIPv4Address(pkt.DstIP, 32)
+	return trie.FindDeepestTagsWithFilterAppend(ret, dstIP, func(tag protos.SpoofRuleV4) bool {
+		if tag.Proto != 0 && tag.Proto != pkt.L4Proto {
+			return false
+		}
+		if tag.SrcPort != 0 && tag.SrcPort != pkt.SrcPort {
+			return false
+		}
+		if tag.DstPort != 0 && tag.DstPort != pkt.DstPort {
+			return false
+		}
+		return IPv4PrefixToUint32(tag.SrcIP, uint(tag.SrcIPPrefixLen)) == IPv4PrefixToUint32(pkt.SrcIP, uint(tag.SrcIPPrefixLen))
+	})
 }

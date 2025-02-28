@@ -3,12 +3,15 @@ package redirects
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
+	"github.com/zxhio/xdpass/pkg/netutil"
 	"github.com/zxhio/xdpass/pkg/xdpprog"
+	"golang.org/x/sys/unix"
 )
 
 type spoofOpt struct {
@@ -67,20 +70,36 @@ func (s spoof) handleCommand() error {
 	return nil
 }
 
+func formatProto(proto uint16) string {
+	switch proto {
+	case unix.IPPROTO_TCP:
+		return "TCP"
+	case unix.IPPROTO_UDP:
+		return "UDP"
+	case unix.IPPROTO_ICMP:
+		return "ICMP"
+	default:
+		return "ALL"
+	}
+}
+
 func (spoof) showList() error {
 	req := protos.SpoofReq{Operation: protos.SpoofOperation_List}
 	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
 	if err != nil {
 		return err
 	}
+	sort.Sort(protos.SpoofRuleSlice(resp.Rules))
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "Spoof Type", "Src IP", "Dst IP", "Src Port", "Dst Port"})
+	table.SetHeader([]string{"ID", "Spoof Type", "Proto", "Src IP", "Dst IP", "Src Port", "Dst Port"})
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	for _, rule := range resp.Rules {
 		table.Append([]string{
 			fmt.Sprintf("%d", rule.ID), rule.SpoofType.String(),
-			rule.SrcIPAddrLPM.String(), rule.DstIPAddrLPM.String(),
+			formatProto(rule.Proto),
+			fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.SrcIP), rule.SrcIPPrefixLen),
+			fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.DstIP), rule.DstIPPrefixLen),
 			fmt.Sprintf("%d", rule.SrcPort), fmt.Sprintf("%d", rule.DstPort),
 		})
 	}
@@ -109,11 +128,15 @@ func (spoof) showListTypes() error {
 
 func (spoof) opRule(op protos.SpoofOperation) error {
 	req := protos.SpoofReq{Operation: op, Rules: []protos.SpoofRule{{
-		SpoofType:    opt.spoof.typ,
-		SrcIPAddrLPM: opt.spoof.srcIPLPM,
-		DstIPAddrLPM: opt.spoof.dstIPLPM,
-		SrcPort:      opt.spoof.srcPort,
-		DstPort:      opt.spoof.dstPort,
+		SpoofRuleV4: protos.SpoofRuleV4{
+			SpoofType:      opt.spoof.typ,
+			SrcPort:        opt.spoof.srcPort,
+			DstPort:        opt.spoof.dstPort,
+			SrcIPPrefixLen: uint8(opt.spoof.srcIPLPM.PrefixLen),
+			DstIPPrefixLen: uint8(opt.spoof.dstIPLPM.PrefixLen),
+			SrcIP:          opt.spoof.srcIPLPM.To4().Address,
+			DstIP:          opt.spoof.dstIPLPM.To4().Address,
+		},
 	}}}
 	_, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
 	return err
