@@ -3,17 +3,17 @@ package netutil
 import "time"
 
 type Statistics struct {
-	RxPackets uint64
-	TxPackets uint64
-	RxBytes   uint64
-	TxBytes   uint64
-	RxIOs     uint64 // recv
-	TxIOs     uint64 // sendto
-	RxErrors  uint64
-	TxErrors  uint64
-	RxDropped uint64
-	TxDropped uint64
-	Timestamp time.Time // Get statistics time
+	RxPackets uint64    `json:"rx_packets"`
+	TxPackets uint64    `json:"tx_packets"`
+	RxBytes   uint64    `json:"rx_bytes"`
+	TxBytes   uint64    `json:"tx_bytes"`
+	RxIOs     uint64    `json:"rx_ios"` // recv
+	TxIOs     uint64    `json:"tx_ios"` // sendto
+	RxErrors  uint64    `json:"rx_errors"`
+	TxErrors  uint64    `json:"tx_errors"`
+	RxDropped uint64    `json:"rx_dropped"`
+	TxDropped uint64    `json:"tx_dropped"`
+	Timestamp time.Time `json:"timestamp"` // Get statistics time
 }
 
 type StatisticsRate struct {

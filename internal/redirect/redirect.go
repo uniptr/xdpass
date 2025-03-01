@@ -4,13 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"runtime"
 	"sync"
-	"time"
 
 	"github.com/cilium/ebpf/link"
-	"github.com/olekukonko/tablewriter"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
@@ -22,7 +19,6 @@ import (
 	"github.com/zxhio/xdpass/internal/redirect/spoof"
 	"github.com/zxhio/xdpass/internal/redirect/tuntap"
 	"github.com/zxhio/xdpass/pkg/fastpkt"
-	"github.com/zxhio/xdpass/pkg/humanize"
 	"github.com/zxhio/xdpass/pkg/netutil"
 	"github.com/zxhio/xdpass/pkg/utils"
 	"github.com/zxhio/xdpass/pkg/xdp"
@@ -65,6 +61,7 @@ type Redirect struct {
 	*xdpprog.Objects
 	xsks    []*xdp.XDPSocket
 	filter  *firewall.Filter
+	stats   *redirectStats
 	server  *commands.MessageServer
 	handles map[protos.RedirectType]handle.RedirectHandle
 	closers utils.NamedClosers
@@ -148,15 +145,18 @@ func NewRedirect(ifaceName string, opts ...RedirectOpt) (*Redirect, error) {
 		return nil, err
 	}
 
+	stats := &redirectStats{xsks: xsks}
+
 	r := Redirect{
 		redirectOpts: &o,
 		xsks:         xsks,
 		Objects:      objs,
 		filter:       filter,
+		stats:        stats,
 	}
 
 	// TODO: add address option
-	server, err := commands.NewMessageServer(commands.DefUnixSock, filter, &r)
+	server, err := commands.NewMessageServer(commands.DefUnixSock, filter, &r, stats)
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
@@ -221,10 +221,6 @@ func (r *Redirect) Run(ctx context.Context) error {
 
 	// Close in r.closers, not use ctx args
 	go r.server.Serve(context.Background())
-
-	// Test output
-	// TODO: response to xdpass stats
-	go r.dumpStats()
 
 	var xskGroups []*xskGroup
 	cores := r.cores[:min(len(r.xsks), len(r.cores))]
@@ -352,62 +348,6 @@ func (r *Redirect) HandleReqData(client *commands.MessageClient, data []byte) er
 		return commands.ResponseErrorCode(client, fmt.Errorf("invalid redirect type: %s", req.RedirectType), protos.ErrorCode_InvalidRequest)
 	}
 	return handle.HandleReqData(client, req.RedirectData)
-}
-
-func (r *Redirect) dumpStats() {
-	prev := make(map[int]netutil.Statistics)
-
-	timer := time.NewTicker(time.Second * 3)
-	for range timer.C {
-		tbl := tablewriter.NewWriter(os.Stdout)
-		tbl.SetHeader([]string{"queue", "rx_pkts", "rx_pps", "tx_pkts", "tx_pps", "rx_bytes", "rx_bps", "rx_iops", "rx_err_iops"})
-		tbl.SetAlignment(tablewriter.ALIGN_RIGHT)
-		tbl.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
-
-		sum := struct {
-			netutil.Statistics
-			netutil.StatisticsRate
-		}{}
-		for _, xsk := range r.xsks {
-			stat := xsk.Stats()
-			rate := stat.Rate(prev[xsk.SocketFD()])
-			prev[xsk.SocketFD()] = stat
-
-			tbl.Append([]string{
-				fmt.Sprintf("%d", xsk.QueueID()),
-				fmt.Sprintf("%d", stat.RxPackets),
-				fmt.Sprintf("%.0f", rate.RxPPS),
-				fmt.Sprintf("%d", stat.TxPackets),
-				fmt.Sprintf("%.0f", rate.TxPPS),
-				humanize.Bytes(int(stat.RxBytes)),
-				humanize.BitsRate(int(rate.RxBPS)),
-				fmt.Sprintf("%.0f", rate.RxIOPS),
-				fmt.Sprintf("%.0f", rate.RxErrorPS),
-			})
-
-			sum.RxPackets += stat.RxPackets
-			sum.TxPackets += stat.TxPackets
-			sum.RxBytes += stat.RxBytes
-			sum.RxPPS += rate.RxPPS
-			sum.TxPPS += rate.TxPPS
-			sum.RxBPS += rate.RxBPS
-			sum.RxIOPS += rate.RxIOPS
-			sum.RxErrorPS += rate.RxErrorPS
-		}
-		tbl.Append([]string{
-			"SUM",
-			fmt.Sprintf("%d", sum.RxPackets),
-			fmt.Sprintf("%.0f", sum.RxPPS),
-			fmt.Sprintf("%d", sum.TxPackets),
-			fmt.Sprintf("%.0f", sum.TxPPS),
-			humanize.Bytes(int(sum.RxBytes)),
-			humanize.BitsRate(int(sum.RxBPS)),
-			fmt.Sprintf("%.0f", sum.RxIOPS),
-			fmt.Sprintf("%.0f", sum.RxErrorPS),
-		})
-		tbl.Render()
-		fmt.Println()
-	}
 }
 
 func setAffinityCPU(cpu int) error {

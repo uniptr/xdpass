@@ -75,6 +75,15 @@ Then you can see the statistics output (with *-s 1*)
 
 To filter network packets by setting an IP or CIDR.
 
+### stats
+
+Display a live stream of network traffic statistics.
+
+Specify output duration by `--duration -d`, e.g. output per 10s
+```shell
+$ xdpass stats -d 10s
+```
+
 ## xdpassd
 
 Using XDP to filter or redirect packets to user space.
