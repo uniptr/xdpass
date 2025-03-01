@@ -71,9 +71,6 @@ type RedirectReq struct {
 	RedirectData json.RawMessage `json:"redirect_data"`
 }
 
-// Dump
-// TODO: add req/resp
-
 // Remote
 // TODO: add req/resp
 
@@ -141,32 +138,6 @@ func (t *SpoofType) UnmarshalJSON(data []byte) error {
 	return t.Set(s)
 }
 
-type SpoofOperation int
-
-const (
-	SpoofOperation_Nop SpoofOperation = iota
-	SpoofOperation_List
-	SpoofOperation_ListTypes
-	SpoofOperation_Add
-	SpoofOperation_Del
-)
-
-func (o SpoofOperation) String() string {
-	switch o {
-	case SpoofOperation_Nop:
-		return "nop"
-	case SpoofOperation_List:
-		return "list"
-	case SpoofOperation_ListTypes:
-		return "list-types"
-	case SpoofOperation_Add:
-		return "add"
-	case SpoofOperation_Del:
-		return "del"
-	}
-	return "unknown"
-}
-
 type SpoofRule struct {
 	ID uint32 `json:"id,omitempty"`
 	SpoofRuleV4
@@ -196,8 +167,8 @@ func (d *SpoofRuleV4) String() string {
 }
 
 type SpoofReq struct {
-	Operation SpoofOperation `json:"operation"`
-	Rules     []SpoofRule    `json:"rules,omitempty"`
+	Operation Operation   `json:"operation"`
+	Rules     []SpoofRule `json:"rules,omitempty"`
 }
 
 type SpoofResp struct {
@@ -206,32 +177,9 @@ type SpoofResp struct {
 
 // Tun
 
-type TuntapOperation int
-
-const (
-	TuntapOperation_Nop TuntapOperation = iota
-	TuntapOperation_List
-	TuntapOperation_Add
-	TuntapOperation_Del
-)
-
-func (o TuntapOperation) String() string {
-	switch o {
-	case TuntapOperation_Nop:
-		return "nop"
-	case TuntapOperation_List:
-		return "list"
-	case TuntapOperation_Add:
-		return "add"
-	case TuntapOperation_Del:
-		return "del"
-	}
-	return "unknown"
-}
-
 type TuntapReq struct {
-	Operation TuntapOperation `json:"operation"`
-	Devices   []TuntapDevice  `json:"devices,omitempty"`
+	Operation Operation      `json:"operation"`
+	Devices   []TuntapDevice `json:"devices,omitempty"`
 }
 
 type TuntapDevice struct {

@@ -86,14 +86,14 @@ func (f *Filter) HandleReqData(client *commands.MessageClient, data []byte) erro
 	}
 
 	switch req.Operation {
-	case protos.FilterOperation_Nop:
+	case protos.OperationNop:
 		data, err = []byte("{}"), nil
-	case protos.FilterOperation_List:
+	case protos.OperationList:
 		data, err = f.handleOpShowList()
-	case protos.FilterOperation_Add:
-		data, err = f.handleOpAddDel(req.Rules, protos.FilterOperation_Add, f.AddIPKey)
-	case protos.FilterOperation_Del:
-		data, err = f.handleOpAddDel(req.Rules, protos.FilterOperation_Del, f.DelIPKey)
+	case protos.OperationAdd:
+		data, err = f.handleOpAddDel(req.Rules, protos.OperationAdd, f.AddIPKey)
+	case protos.OperationDel:
+		data, err = f.handleOpAddDel(req.Rules, protos.OperationDel, f.DelIPKey)
 	}
 	if err != nil {
 		return commands.ResponseError(client, err)
@@ -113,7 +113,7 @@ func (f *Filter) handleOpShowList() ([]byte, error) {
 	return json.Marshal(&resp)
 }
 
-func (f *Filter) handleOpAddDel(rules []protos.FilterRule, op protos.FilterOperation, handle func(key xdpprog.IPLpmKey) error) ([]byte, error) {
+func (f *Filter) handleOpAddDel(rules []protos.FilterRule, op protos.Operation, handle func(key xdpprog.IPLpmKey) error) ([]byte, error) {
 	for _, rule := range rules {
 		for _, key := range rule.Keys {
 			logrus.WithFields(logrus.Fields{"key": key, "iface": f.ifaceName, "op": op}).Debug("Operate ip lpm key")

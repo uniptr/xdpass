@@ -44,19 +44,19 @@ func (t tuntap) handleCommand(opt *tunOpt) error {
 	}
 
 	if len(opt.addTuns) > 0 {
-		return t.postRules(protos.TuntapOperation_Add, opt.addTuns, netlink.TUNTAP_MODE_TUN)
+		return t.postRules(protos.OperationAdd, opt.addTuns, netlink.TUNTAP_MODE_TUN)
 	}
 	if len(opt.addTaps) > 0 {
-		return t.postRules(protos.TuntapOperation_Add, opt.addTaps, netlink.TUNTAP_MODE_TAP)
+		return t.postRules(protos.OperationAdd, opt.addTaps, netlink.TUNTAP_MODE_TAP)
 	}
 	if len(opt.delDevices) > 0 {
-		return t.postRules(protos.TuntapOperation_Del, opt.delDevices, netlink.TUNTAP_MODE_TAP)
+		return t.postRules(protos.OperationDel, opt.delDevices, netlink.TUNTAP_MODE_TAP)
 	}
 	return nil
 }
 
 func (tuntap) show() error {
-	req := protos.TuntapReq{Operation: protos.TuntapOperation_List}
+	req := protos.TuntapReq{Operation: protos.OperationList}
 	resp, err := getResponse[protos.TuntapReq, protos.TuntapResp](protos.RedirectType_Tuntap, &req)
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func (tuntap) show() error {
 	return nil
 }
 
-func (tuntap) postRules(op protos.TuntapOperation, devs []string, mode netlink.TuntapMode) error {
+func (tuntap) postRules(op protos.Operation, devs []string, mode netlink.TuntapMode) error {
 	var req protos.TuntapReq
 	req.Operation = op
 	req.Devices = []protos.TuntapDevice{}

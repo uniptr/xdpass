@@ -55,15 +55,15 @@ func (h *SpoofHandle) HandleReqData(client *commands.MessageClient, data []byte)
 	}
 
 	switch req.Operation {
-	case protos.SpoofOperation_Nop:
+	case protos.OperationNop:
 		return handle.ResponseRedirectData(client, []byte("{}"))
-	case protos.SpoofOperation_List:
+	case protos.OperationList:
 		data, err = h.handleOpList(&req)
-	case protos.SpoofOperation_ListTypes:
+	case protos.OperationListSpoofTypes:
 		data, err = h.handleOpListTypes(&req)
-	case protos.SpoofOperation_Add:
+	case protos.OperationAdd:
 		data, err = h.handleOpAdd(&req)
-	case protos.SpoofOperation_Del:
+	case protos.OperationDel:
 		data, err = h.handleOpDel(&req)
 	}
 	if err != nil {

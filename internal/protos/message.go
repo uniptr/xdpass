@@ -115,3 +115,29 @@ func GetMessageRespValue[T any](data []byte) (*T, error) {
 	}
 	return &v, nil
 }
+
+type Operation int
+
+const (
+	OperationNop Operation = iota
+	OperationAdd
+	OperationDel
+	OperationList
+	OperationListSpoofTypes
+)
+
+func (o Operation) String() string {
+	switch o {
+	case OperationNop:
+		return "nop"
+	case OperationAdd:
+		return "add"
+	case OperationDel:
+		return "del"
+	case OperationList:
+		return "list"
+	case OperationListSpoofTypes:
+		return "list-spoof-types"
+	}
+	return "unknown"
+}

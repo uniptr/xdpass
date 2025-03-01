@@ -37,7 +37,7 @@ var spoofCmd = &cobra.Command{
 
 func init() {
 	commands.SetFlagsList(spoofCmd.Flags(), &opt.spoof.showList, "Show spoof rule list")
-	spoofCmd.Flags().BoolVar(&opt.spoof.showTypes, "list-types", false, "Show supported spoof type list")
+	spoofCmd.Flags().BoolVar(&opt.spoof.showTypes, "list-spoof-types", false, "Show supported spoof type list")
 	spoofCmd.Flags().BoolVar(&opt.spoof.add, "add", false, "Add spoof rule")
 	spoofCmd.Flags().BoolVar(&opt.spoof.del, "del", false, "Delete spoof rule")
 	spoofCmd.Flags().VarP(&opt.spoof.srcIPLPM, "src-ip", "s", "Source IP")
@@ -61,11 +61,11 @@ func (s spoof) handleCommand() error {
 	}
 
 	if opt.spoof.add {
-		return s.opRule(protos.SpoofOperation_Add)
+		return s.opRule(protos.OperationAdd)
 	}
 
 	if opt.spoof.del {
-		return s.opRule(protos.SpoofOperation_Del)
+		return s.opRule(protos.OperationDel)
 	}
 	return nil
 }
@@ -84,7 +84,7 @@ func formatProto(proto uint16) string {
 }
 
 func (spoof) showList() error {
-	req := protos.SpoofReq{Operation: protos.SpoofOperation_List}
+	req := protos.SpoofReq{Operation: protos.OperationList}
 	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
 	if err != nil {
 		return err
@@ -109,7 +109,7 @@ func (spoof) showList() error {
 }
 
 func (spoof) showListTypes() error {
-	req := protos.SpoofReq{Operation: protos.SpoofOperation_ListTypes}
+	req := protos.SpoofReq{Operation: protos.OperationListSpoofTypes}
 	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func (spoof) showListTypes() error {
 	return nil
 }
 
-func (spoof) opRule(op protos.SpoofOperation) error {
+func (spoof) opRule(op protos.Operation) error {
 	req := protos.SpoofReq{Operation: op, Rules: []protos.SpoofRule{{
 		SpoofRuleV4: protos.SpoofRuleV4{
 			SpoofType:      opt.spoof.typ,

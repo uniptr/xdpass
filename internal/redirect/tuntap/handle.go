@@ -47,11 +47,11 @@ func (h *TuntapHandle) HandleReqData(client *commands.MessageClient, data []byte
 	}
 
 	switch req.Operation {
-	case protos.TuntapOperation_List:
+	case protos.OperationList:
 		data, err = h.handleOpList()
-	case protos.TuntapOperation_Add:
+	case protos.OperationAdd:
 		data, err = h.handleOpAdd(&req)
-	case protos.TuntapOperation_Del:
+	case protos.OperationDel:
 		data, err = h.handleOpDel(&req)
 	}
 	if err != nil {
