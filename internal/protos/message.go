@@ -8,31 +8,31 @@ import (
 type Type int
 
 const (
-	Type_Redirect Type = iota + 1
-	Type_Filter
-	Type_Interface
-	Type_Stats
+	TypeRedirect Type = iota + 1
+	TypeFilter
+	TypeInterface
+	TypeStats
 )
 
 const (
-	TypeStr_Redirect  = "redirect"
-	TypeStr_Filter    = "filter"
-	TypeStr_Interface = "interface"
-	TypeStr_Stats     = "stats"
+	typeStrRedirect  = "redirect"
+	typeStrFilter    = "filter"
+	typeStrInterface = "interface"
+	typeStrStats     = "stats"
 )
 
 var typeLookup = map[string]Type{
-	TypeStr_Redirect:  Type_Redirect,
-	TypeStr_Filter:    Type_Filter,
-	TypeStr_Interface: Type_Interface,
-	TypeStr_Stats:     Type_Stats,
+	typeStrRedirect:  TypeRedirect,
+	typeStrFilter:    TypeFilter,
+	typeStrInterface: TypeInterface,
+	typeStrStats:     TypeStats,
 }
 
 var typeStrLookup = map[Type]string{
-	Type_Redirect:  TypeStr_Redirect,
-	Type_Filter:    TypeStr_Filter,
-	Type_Interface: TypeStr_Interface,
-	Type_Stats:     TypeStr_Stats,
+	TypeRedirect:  typeStrRedirect,
+	TypeFilter:    typeStrFilter,
+	TypeInterface: typeStrInterface,
+	TypeStats:     typeStrStats,
 }
 
 func (t Type) String() string {
@@ -40,7 +40,11 @@ func (t Type) String() string {
 }
 
 func (t *Type) Set(s string) error {
-	*t = typeLookup[s]
+	v, ok := typeLookup[s]
+	if !ok {
+		return fmt.Errorf("invalid type: %s", s)
+	}
+	*t = v
 	return nil
 }
 
@@ -58,13 +62,7 @@ func (t *Type) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-
-	v, ok := typeLookup[s]
-	if !ok {
-		return fmt.Errorf("invalid type: %s", s)
-	}
-	*t = v
-	return nil
+	return t.Set(s)
 }
 
 type MessageReq struct {

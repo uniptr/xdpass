@@ -12,7 +12,7 @@ import (
 )
 
 var tunCmd = &cobra.Command{
-	Use:   protos.RedirectTypeStr_Tuntap,
+	Use:   protos.RedirectTypeTuntap.String(),
 	Short: "Redirect network traffic to tuntap devices",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		commands.SetVerbose()
@@ -57,7 +57,7 @@ func (t tuntap) handleCommand(opt *tunOpt) error {
 
 func (tuntap) show() error {
 	req := protos.TuntapReq{Operation: protos.OperationList}
-	resp, err := getResponse[protos.TuntapReq, protos.TuntapResp](protos.RedirectType_Tuntap, &req)
+	resp, err := getResponse[protos.TuntapReq, protos.TuntapResp](protos.RedirectTypeTuntap, &req)
 	if err != nil {
 		return err
 	}
@@ -80,6 +80,6 @@ func (tuntap) postRules(op protos.Operation, devs []string, mode netlink.TuntapM
 	for _, dev := range devs {
 		req.Devices = append(req.Devices, protos.TuntapDevice{Name: dev, Mode: mode})
 	}
-	_, err := getResponse[protos.TuntapReq, protos.TuntapResp](protos.RedirectType_Tuntap, &req)
+	_, err := getResponse[protos.TuntapReq, protos.TuntapResp](protos.RedirectTypeTuntap, &req)
 	return err
 }

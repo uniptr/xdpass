@@ -9,7 +9,7 @@ import (
 )
 
 var statsCommand = &cobra.Command{
-	Use:   protos.TypeStr_Stats,
+	Use:   protos.TypeStats.String(),
 	Short: "Display a live stream of network traffic statistics",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return nil

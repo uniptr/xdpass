@@ -335,7 +335,7 @@ func (r *Redirect) Stop() error {
 }
 
 func (*Redirect) CommandType() protos.Type {
-	return protos.Type_Redirect
+	return protos.TypeRedirect
 }
 
 func (r *Redirect) HandleReqData(client *commands.MessageClient, data []byte) error {

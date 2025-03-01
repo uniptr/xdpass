@@ -12,7 +12,7 @@ import (
 )
 
 var dumpCmd = &cobra.Command{
-	Use:   protos.RedirectTypeStr_Dump,
+	Use:   protos.RedirectTypeDump.String(),
 	Short: "Dump network traffic packets",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		commands.SetVerbose()
@@ -30,7 +30,7 @@ func init() {
 type dump struct{}
 
 func (dump) handleCommand(_ *dumpOpt) error {
-	client, err := commands.GetMessageClient(commands.DefUnixSock, protos.Type_Redirect, "", &protos.RedirectReq{RedirectType: protos.RedirectType_Dump})
+	client, err := commands.GetMessageClient(commands.DefUnixSock, protos.TypeRedirect, "", &protos.RedirectReq{RedirectType: protos.RedirectTypeDump})
 	if err != nil {
 		return err
 	}

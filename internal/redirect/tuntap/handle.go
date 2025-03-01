@@ -26,7 +26,7 @@ func NewTuntapHandle() (handle.RedirectHandle, error) {
 }
 
 func (TuntapHandle) RedirectType() protos.RedirectType {
-	return protos.RedirectType_Tuntap
+	return protos.RedirectTypeTuntap
 }
 
 func (h *TuntapHandle) Close() error {

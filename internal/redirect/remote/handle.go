@@ -13,7 +13,7 @@ func NewRemoteHandle() (handle.RedirectHandle, error) {
 }
 
 func (RemoteHandle) RedirectType() protos.RedirectType {
-	return protos.RedirectType_Remote
+	return protos.RedirectTypeRemote
 }
 
 func (h *RemoteHandle) Close() error {

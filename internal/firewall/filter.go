@@ -75,7 +75,7 @@ func (f *Filter) List() ([]xdpprog.IPLpmKey, error) {
 }
 
 // For cmdconn.ReqDataHandle
-func (f *Filter) CommandType() protos.Type { return protos.Type_Filter }
+func (f *Filter) CommandType() protos.Type { return protos.TypeFilter }
 
 // For cmdconn.ReqDataHandle
 func (f *Filter) HandleReqData(client *commands.MessageClient, data []byte) error {

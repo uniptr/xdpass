@@ -12,35 +12,44 @@ import (
 type RedirectType int
 
 const (
-	RedirectType_Dump RedirectType = iota + 1
-	RedirectType_Remote
-	RedirectType_Spoof
-	RedirectType_Tuntap
+	RedirectTypeDump RedirectType = iota + 1
+	RedirectTypeRemote
+	RedirectTypeSpoof
+	RedirectTypeTuntap
 )
 
 const (
-	RedirectTypeStr_Dump   = "dump"
-	RedirectTypeStr_Remote = "remote"
-	RedirectTypeStr_Spoof  = "spoof"
-	RedirectTypeStr_Tuntap = "tuntap"
+	redirectTypeStrDump   = "dump"
+	redirectTypeStrRemote = "remote"
+	redirectTypeStrSpoof  = "spoof"
+	redirectTypeStrTuntap = "tuntap"
 )
 
 var redirectTypeStrLookup = map[RedirectType]string{
-	RedirectType_Dump:   RedirectTypeStr_Dump,
-	RedirectType_Remote: RedirectTypeStr_Remote,
-	RedirectType_Spoof:  RedirectTypeStr_Spoof,
-	RedirectType_Tuntap: RedirectTypeStr_Tuntap,
+	RedirectTypeDump:   redirectTypeStrDump,
+	RedirectTypeRemote: redirectTypeStrRemote,
+	RedirectTypeSpoof:  redirectTypeStrSpoof,
+	RedirectTypeTuntap: redirectTypeStrTuntap,
 }
 
 var redirectTypeLookup = map[string]RedirectType{
-	RedirectTypeStr_Dump:   RedirectType_Dump,
-	RedirectTypeStr_Remote: RedirectType_Remote,
-	RedirectTypeStr_Spoof:  RedirectType_Spoof,
-	RedirectTypeStr_Tuntap: RedirectType_Tuntap,
+	redirectTypeStrDump:   RedirectTypeDump,
+	redirectTypeStrRemote: RedirectTypeRemote,
+	redirectTypeStrSpoof:  RedirectTypeSpoof,
+	redirectTypeStrTuntap: RedirectTypeTuntap,
 }
 
 func (t RedirectType) String() string {
 	return redirectTypeStrLookup[t]
+}
+
+func (t *RedirectType) Set(s string) error {
+	v, ok := redirectTypeLookup[s]
+	if !ok {
+		return fmt.Errorf("invalid redirect type: %s", s)
+	}
+	*t = v
+	return nil
 }
 
 func (t RedirectType) MarshalJSON() ([]byte, error) {
@@ -57,13 +66,7 @@ func (t *RedirectType) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-
-	v, ok := redirectTypeLookup[s]
-	if !ok {
-		return fmt.Errorf("invalid redirect type string")
-	}
-	*t = v
-	return nil
+	return t.Set(s)
 }
 
 type RedirectReq struct {
@@ -79,31 +82,31 @@ type RedirectReq struct {
 type SpoofType uint16
 
 const (
-	SpoofType_None SpoofType = iota
-	SpoofType_ICMPEchoReply
-	SpoofType_TCPReset
-	SpoofType_TCPResetSYN
+	SpoofTypeNone SpoofType = iota
+	SpoofTypeICMPEchoReply
+	SpoofTypeTCPReset
+	SpoofTypeTCPResetSYN
 )
 
 const (
-	SpoofTypeStr_None          = "none"
-	SpoofTypeStr_ICMPEchoReply = "icmp-echo-reply"
-	SpoofTypeStr_TCPReset      = "tcp-reset"
-	SpoofTypeStr_TCPResetSYN   = "tcp-reset-syn"
+	spoofTypeStrNone          = "none"
+	spoofTypeStrICMPEchoReply = "icmp-echo-reply"
+	spoofTypeStrTCPReset      = "tcp-reset"
+	spoofTypeStrTCPResetSYN   = "tcp-reset-syn"
 )
 
 var spoofTypeLookup = map[string]SpoofType{
-	SpoofTypeStr_None:          SpoofType_None,
-	SpoofTypeStr_ICMPEchoReply: SpoofType_ICMPEchoReply,
-	SpoofTypeStr_TCPReset:      SpoofType_TCPReset,
-	SpoofTypeStr_TCPResetSYN:   SpoofType_TCPResetSYN,
+	spoofTypeStrNone:          SpoofTypeNone,
+	spoofTypeStrICMPEchoReply: SpoofTypeICMPEchoReply,
+	spoofTypeStrTCPReset:      SpoofTypeTCPReset,
+	spoofTypeStrTCPResetSYN:   SpoofTypeTCPResetSYN,
 }
 
 var spoofTypeStrLookup = map[SpoofType]string{
-	SpoofType_None:          SpoofTypeStr_None,
-	SpoofType_ICMPEchoReply: SpoofTypeStr_ICMPEchoReply,
-	SpoofType_TCPReset:      SpoofTypeStr_TCPReset,
-	SpoofType_TCPResetSYN:   SpoofTypeStr_TCPResetSYN,
+	SpoofTypeNone:          spoofTypeStrNone,
+	SpoofTypeICMPEchoReply: spoofTypeStrICMPEchoReply,
+	SpoofTypeTCPReset:      spoofTypeStrTCPReset,
+	SpoofTypeTCPResetSYN:   spoofTypeStrTCPResetSYN,
 }
 
 func (t SpoofType) String() string { return spoofTypeStrLookup[t] }

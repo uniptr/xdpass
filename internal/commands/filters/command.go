@@ -8,7 +8,7 @@ import (
 )
 
 var filterCmd = &cobra.Command{
-	Use:   protos.TypeStr_Filter,
+	Use:   protos.TypeFilter.String(),
 	Short: "Manage network traffic filters",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		commands.SetVerbose()

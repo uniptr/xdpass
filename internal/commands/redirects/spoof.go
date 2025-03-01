@@ -27,7 +27,7 @@ type spoofOpt struct {
 }
 
 var spoofCmd = &cobra.Command{
-	Use:   protos.RedirectTypeStr_Spoof,
+	Use:   protos.RedirectTypeSpoof.String(),
 	Short: "Traffic spoof based on rules",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		commands.SetVerbose()
@@ -85,7 +85,7 @@ func formatProto(proto uint16) string {
 
 func (spoof) showList() error {
 	req := protos.SpoofReq{Operation: protos.OperationList}
-	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
+	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func (spoof) showList() error {
 
 func (spoof) showListTypes() error {
 	req := protos.SpoofReq{Operation: protos.OperationListSpoofTypes}
-	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
+	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)
 	if err != nil {
 		return err
 	}
@@ -138,6 +138,6 @@ func (spoof) opRule(op protos.Operation) error {
 			DstIP:          opt.spoof.dstIPLPM.To4().Address,
 		},
 	}}}
-	_, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectType_Spoof, &req)
+	_, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)
 	return err
 }

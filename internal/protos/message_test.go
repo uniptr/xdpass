@@ -11,7 +11,7 @@ func TestType(t *testing.T) {
 	var v = struct {
 		T Type `json:"type"`
 	}{
-		T: Type_Redirect,
+		T: TypeRedirect,
 	}
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -23,7 +23,7 @@ func TestType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, v.T, Type_Filter)
+	assert.Equal(t, v.T, TypeFilter)
 
 	// Invalid type
 	err = json.Unmarshal([]byte(`{"type":"foo"}`), &v)

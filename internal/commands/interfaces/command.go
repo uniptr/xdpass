@@ -7,7 +7,7 @@ import (
 )
 
 var ifaceCmd = &cobra.Command{
-	Use:   protos.TypeStr_Interface,
+	Use:   protos.TypeInterface.String(),
 	Short: "Manage network interface",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return nil

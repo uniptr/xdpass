@@ -40,7 +40,7 @@ func NewSpoofHandle(ifaceName string) (handle.RedirectHandle, error) {
 }
 
 func (SpoofHandle) RedirectType() protos.RedirectType {
-	return protos.RedirectType_Spoof
+	return protos.RedirectTypeSpoof
 }
 
 func (h *SpoofHandle) Close() error {
@@ -89,9 +89,9 @@ func (h *SpoofHandle) handleOpList(*protos.SpoofReq) ([]byte, error) {
 
 func (h *SpoofHandle) handleOpListTypes(*protos.SpoofReq) ([]byte, error) {
 	resp := protos.SpoofResp{Rules: []protos.SpoofRule{
-		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofType_ICMPEchoReply}},
-		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofType_TCPReset}},
-		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofType_TCPResetSYN}},
+		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeICMPEchoReply}},
+		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeTCPReset}},
+		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeTCPResetSYN}},
 	}}
 	return json.Marshal(resp)
 }
@@ -205,7 +205,7 @@ func (h *SpoofHandle) handlePacketICMPv4(pkt *fastpkt.Packet) error {
 
 	found := false
 	for _, rule := range rules {
-		if rule.SpoofType == protos.SpoofType_ICMPEchoReply {
+		if rule.SpoofType == protos.SpoofTypeICMPEchoReply {
 			if logrus.GetLevel() >= logrus.DebugLevel {
 				logrus.WithField("rule", rule.String()).Debug("Matched rule")
 			}
@@ -278,9 +278,9 @@ func (h *SpoofHandle) handlePacketTCP(pkt *fastpkt.Packet) error {
 	}
 
 	for _, rule := range rules {
-		if rule.SpoofType == protos.SpoofType_TCPReset {
+		if rule.SpoofType == protos.SpoofTypeTCPReset {
 			return h.handlePacketTCPReset(pkt)
-		} else if rule.SpoofType == protos.SpoofType_TCPResetSYN && fastpkt.DataPtrTCP(pkt.RxData, int(pkt.L2Len+pkt.L3Len)).Flags.Has(fastpkt.TCPFlagSYN) {
+		} else if rule.SpoofType == protos.SpoofTypeTCPResetSYN && fastpkt.DataPtrTCP(pkt.RxData, int(pkt.L2Len+pkt.L3Len)).Flags.Has(fastpkt.TCPFlagSYN) {
 			return h.handlePacketTCPReset(pkt)
 		}
 	}

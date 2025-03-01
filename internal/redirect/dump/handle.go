@@ -34,7 +34,7 @@ func NewDumpHandle() (handle.RedirectHandle, error) {
 }
 
 func (DumpHandle) RedirectType() protos.RedirectType {
-	return protos.RedirectType_Dump
+	return protos.RedirectTypeDump
 }
 
 func (h *DumpHandle) Close() error {

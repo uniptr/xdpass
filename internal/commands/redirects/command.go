@@ -9,7 +9,7 @@ import (
 )
 
 var redirectCmd = &cobra.Command{
-	Use:   protos.TypeStr_Redirect,
+	Use:   protos.TypeRedirect.String(),
 	Short: "Redirect network traffic",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return nil
@@ -17,7 +17,7 @@ var redirectCmd = &cobra.Command{
 }
 
 var remoteCmd = &cobra.Command{
-	Use:   protos.RedirectTypeStr_Remote,
+	Use:   protos.RedirectTypeRemote.String(),
 	Short: "Redirect network traffic to remote address",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return nil
@@ -60,7 +60,7 @@ func getResponse[Q, R any](redirectType protos.RedirectType, v *Q) (*R, error) {
 		return nil, err
 	}
 	req := protos.RedirectReq{RedirectType: redirectType, RedirectData: data}
-	resp, err := commands.GetMessage[protos.RedirectReq, R](protos.Type_Redirect, "", &req)
+	resp, err := commands.GetMessage[protos.RedirectReq, R](protos.TypeRedirect, "", &req)
 	if err != nil {
 		return nil, err
 	}
