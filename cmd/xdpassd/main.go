@@ -8,7 +8,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
-	"github.com/zxhio/xdpass/internal/redirect"
+	"github.com/zxhio/xdpass/internal"
 	"github.com/zxhio/xdpass/pkg/xdp"
 )
 
@@ -84,18 +84,18 @@ func main() {
 		xdpOpts = append(xdpOpts, xdp.WithNoNeedWakeup())
 	}
 
-	rx, err := redirect.NewRedirect(opt.ifaceName,
-		redirect.WithRedirectQueueID(opt.queueID),
-		redirect.WithRedirectXDPFlags(attachMode, xdpOpts...),
-		redirect.WithRedirectPollTimeout(opt.pollTimeout),
-		redirect.WithRedirectCores(opt.cores),
+	link, err := internal.NewLinkHandle(opt.ifaceName,
+		internal.WithLinkQueueID(opt.queueID),
+		internal.WithLinkXDPFlags(attachMode, xdpOpts...),
+		internal.WithLinkHandleTimeout(opt.pollTimeout),
+		internal.WithLinkHandleCores(opt.cores),
 	)
 	if err != nil {
 		logrus.WithError(err).Fatal("Fatal to new packet rx")
 	}
-	defer rx.Stop()
+	defer link.Close()
 
-	err = rx.Run(ctx)
+	err = link.Run(ctx)
 	if err != nil {
 		logrus.WithError(err).Fatal("Fatal to serve rx")
 	}
