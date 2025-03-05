@@ -5,15 +5,16 @@ import (
 )
 
 type FilterReq struct {
-	Operation Operation    `json:"operation"`
-	Rules     []FilterRule `json:"rules,omitempty"`
+	Operation Operation          `json:"operation"`
+	Interface string             `json:"interface"`
+	Keys      []xdpprog.IPLpmKey `json:"keys,omitempty"`
 }
 
 type FilterResp struct {
-	Rules []FilterRule `json:"rules"`
+	Interfaces []FilterIPKeys `json:"interfaces,omitempty"`
 }
 
-type FilterRule struct {
+type FilterIPKeys struct {
 	Interface string             `json:"interface"`
 	Keys      []xdpprog.IPLpmKey `json:"keys,omitempty"`
 }

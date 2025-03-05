@@ -54,7 +54,7 @@ type LinkHandle struct {
 	*linkHandleOpts
 	*xdpprog.Objects
 	xsks     []*xdp.XDPSocket
-	filter   *firewall.Filter
+	firewall *firewall.Firewall
 	redirect *redirect.Redirect
 	stats    *Stats
 	server   *commands.MessageServer
@@ -133,12 +133,13 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 		l.WithFields(logrus.Fields{"k": queueID, "v": s.SocketFD()}).Info("Update xsk map")
 	}
 
-	filter, err := firewall.NewFilter(name, objs.IpLpmTrie)
+	firewall, err := firewall.NewFirewall()
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
 	}
-	l.WithField("filter", filter).Info("New firewall filter")
+	firewall.Add(name, objs.IpLpmTrie)
+	l.Info("New firewall")
 
 	redirect, err := redirect.NewRedirect(name)
 	if err != nil {
@@ -146,12 +147,12 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 		return nil, err
 	}
 	closers = append(closers, utils.NamedCloser{Name: "redirect.Redirect", Close: redirect.Close})
-	l.WithField("redirect", redirect).Info("New redirect")
+	l.Info("New redirect")
 
 	stats := &Stats{xsks: xsks}
 
 	// TODO: add address option
-	server, err := commands.NewMessageServer(commands.DefUnixSock, filter, redirect, stats)
+	server, err := commands.NewMessageServer(commands.DefUnixSock, firewall, redirect, stats)
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
@@ -162,7 +163,7 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 		linkHandleOpts: &o,
 		xsks:           xsks,
 		Objects:        objs,
-		filter:         filter,
+		firewall:       firewall,
 		redirect:       redirect,
 		stats:          &Stats{xsks: xsks},
 		server:         server,
