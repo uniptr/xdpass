@@ -10,7 +10,6 @@ import (
 
 type RedirectHandle interface {
 	RedirectType() protos.RedirectType
-	HandleReqData(client *commands.MessageClient, req []byte) error
 	HandlePacket(pkt *fastpkt.Packet)
 	Close() error
 }
@@ -21,10 +20,5 @@ func ResponseRedirectValue[T any](client *commands.MessageClient, v *T) error {
 		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
 	}
 	resp := protos.MessageResp{Data: raw, ErrorCode: 0}
-	return commands.Response(client, &resp)
-}
-
-func ResponseRedirectData(client *commands.MessageClient, data []byte) error {
-	resp := protos.MessageResp{Data: data, ErrorCode: 0}
 	return commands.Response(client, &resp)
 }

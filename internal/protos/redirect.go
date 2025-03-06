@@ -74,6 +74,10 @@ type RedirectReq struct {
 	RedirectData json.RawMessage `json:"redirect_data"`
 }
 
+type DumpReq struct {
+	Interface string `json:"interface,omitempty"`
+}
+
 // Remote
 // TODO: add req/resp
 
@@ -171,17 +175,25 @@ func (d *SpoofRuleV4) String() string {
 
 type SpoofReq struct {
 	Operation Operation   `json:"operation"`
+	Interface string      `json:"interface,omitempty"`
 	Rules     []SpoofRule `json:"rules,omitempty"`
 }
 
 type SpoofResp struct {
-	Rules []SpoofRule `json:"rules,omitempty"`
+	Interfaces     []SpoofInterfaceRule `json:"interfaces,omitempty"`
+	SupportedTypes []SpoofType          `json:"supported_types,omitempty"`
+}
+
+type SpoofInterfaceRule struct {
+	Interface string      `json:"interface"`
+	Rules     []SpoofRule `json:"rules"`
 }
 
 // Tun
 
 type TuntapReq struct {
 	Operation Operation      `json:"operation"`
+	Interface string         `json:"interface,omitempty"`
 	Devices   []TuntapDevice `json:"devices,omitempty"`
 }
 
@@ -191,5 +203,10 @@ type TuntapDevice struct {
 }
 
 type TuntapResp struct {
-	Devices []TuntapDevice `json:"devices,omitempty"`
+	Interfaces []TuntapInterfaceDevices `json:"interfaces,omitempty"`
+}
+
+type TuntapInterfaceDevices struct {
+	Interface string         `json:"interface"`
+	Devices   []TuntapDevice `json:"devices"`
 }

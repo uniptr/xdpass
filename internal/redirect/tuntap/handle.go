@@ -1,15 +1,11 @@
 package tuntap
 
 import (
-	"encoding/json"
 	"fmt"
 	"sync"
 
-	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
-	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/pkg/fastpkt"
 )
 
@@ -18,7 +14,7 @@ type TuntapHandle struct {
 	devices map[string]*netlink.Tuntap
 }
 
-func NewTuntapHandle() (handle.RedirectHandle, error) {
+func NewTuntapHandle() (*TuntapHandle, error) {
 	return &TuntapHandle{
 		mu:      &sync.RWMutex{},
 		devices: make(map[string]*netlink.Tuntap),
@@ -39,92 +35,54 @@ func (h *TuntapHandle) Close() error {
 	return nil
 }
 
-func (h *TuntapHandle) HandleReqData(client *commands.MessageClient, data []byte) error {
-	var req protos.TuntapReq
-	err := json.Unmarshal(data, &req)
-	if err != nil {
-		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
-	}
-
-	switch req.Operation {
-	case protos.OperationList:
-		data, err = h.handleOpList()
-	case protos.OperationAdd:
-		data, err = h.handleOpAdd(&req)
-	case protos.OperationDel:
-		data, err = h.handleOpDel(&req)
-	}
-	if err != nil {
-		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
-	}
-	return handle.ResponseRedirectData(client, data)
-}
-
-func (h *TuntapHandle) handleOpList() ([]byte, error) {
+func (h *TuntapHandle) GetTuntaps() []protos.TuntapDevice {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	resp := protos.TuntapResp{Devices: make([]protos.TuntapDevice, 0, len(h.devices))}
-	for _, tun := range h.devices {
-		resp.Devices = append(resp.Devices, protos.TuntapDevice{Name: tun.LinkAttrs.Name, Mode: tun.Mode})
+	devices := make([]protos.TuntapDevice, 0, len(h.devices))
+	for _, device := range h.devices {
+		devices = append(devices, protos.TuntapDevice{Name: device.LinkAttrs.Name, Mode: device.Mode})
 	}
-	return json.Marshal(resp)
+	return devices
 }
 
-func (h *TuntapHandle) handleOpAdd(req *protos.TuntapReq) ([]byte, error) {
-	for _, device := range req.Devices {
-		h.mu.RLock()
-		_, ok := h.devices[device.Name]
-		h.mu.RUnlock()
-		if ok {
-			return nil, fmt.Errorf("device %s already exists", device.Name)
-		}
+func (h *TuntapHandle) AddTuntap(device *protos.TuntapDevice) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-		tun := &netlink.Tuntap{
-			LinkAttrs: netlink.LinkAttrs{Name: device.Name},
-			Mode:      device.Mode,
-			Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_ONE_QUEUE,
-			Queues:    1,
-		}
-		err := netlink.LinkAdd(tun)
-		if err != nil {
-			return nil, err
-		}
-		err = netlink.LinkSetUp(tun)
-		if err != nil {
-			return nil, err
-		}
-		logrus.WithFields(logrus.Fields{"device": device.Name, "mode": device.Mode}).Info("Add tun device")
-
-		h.mu.Lock()
-		h.devices[device.Name] = tun
-		h.mu.Unlock()
+	if _, ok := h.devices[device.Name]; ok {
+		return fmt.Errorf("device %s already exists", device.Name)
 	}
 
-	return []byte("{}"), nil
+	tun := &netlink.Tuntap{
+		LinkAttrs: netlink.LinkAttrs{Name: device.Name},
+		Mode:      device.Mode,
+		Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_ONE_QUEUE,
+		Queues:    1,
+	}
+	if err := netlink.LinkAdd(tun); err != nil {
+		return err
+	}
+	if err := netlink.LinkSetUp(tun); err != nil {
+		return err
+	}
+	h.devices[device.Name] = tun
+	return nil
 }
 
-func (h *TuntapHandle) handleOpDel(req *protos.TuntapReq) ([]byte, error) {
-	for _, device := range req.Devices {
-		h.mu.RLock()
-		t, ok := h.devices[device.Name]
-		h.mu.RUnlock()
-		if !ok {
-			return nil, fmt.Errorf("device %s not found", device.Name)
-		}
+func (h *TuntapHandle) DelTuntap(device *protos.TuntapDevice) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-		err := netlink.LinkDel(t)
-		if err != nil {
-			return nil, err
-		}
-
-		h.mu.Lock()
-		delete(h.devices, device.Name)
-		h.mu.Unlock()
-
-		logrus.WithField("device", device.Name).Info("Delete tun device")
+	t, ok := h.devices[device.Name]
+	if !ok {
+		return fmt.Errorf("device %s not found", device.Name)
 	}
-	return []byte("{}"), nil
+	if err := netlink.LinkDel(t); err != nil {
+		return err
+	}
+	delete(h.devices, device.Name)
+	return nil
 }
 
 func (h *TuntapHandle) HandlePacket(pkt *fastpkt.Packet) {

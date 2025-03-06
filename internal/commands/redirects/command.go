@@ -34,10 +34,10 @@ type remoteOpt struct {
 var opt struct {
 	ifaceName string
 
-	tuntap tunOpt
-	dump   dumpOpt
+	tuntap TuntapOpt
+	dump   DumpOpt
 	remote remoteOpt
-	spoof  spoofOpt
+	spoof  SpoofOpt
 }
 
 func init() {

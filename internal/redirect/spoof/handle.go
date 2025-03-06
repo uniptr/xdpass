@@ -1,15 +1,13 @@
 package spoof
 
 import (
-	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/kentik/patricia"
 	"github.com/kentik/patricia/generics_tree"
 	"github.com/sirupsen/logrus"
-	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/pkg/fastpkt"
 	"github.com/zxhio/xdpass/pkg/netutil"
 	"golang.org/x/sys/unix"
@@ -29,7 +27,7 @@ type SpoofHandle struct {
 	v4DstIPTree  *generics_tree.TreeV4[protos.SpoofRuleV4] // search key is DstIP
 }
 
-func NewSpoofHandle(ifaceName string) (handle.RedirectHandle, error) {
+func NewSpoofHandle(ifaceName string) (*SpoofHandle, error) {
 	return &SpoofHandle{
 		ifaceName:    ifaceName,
 		mu:           &sync.RWMutex{},
@@ -47,97 +45,48 @@ func (h *SpoofHandle) Close() error {
 	return nil
 }
 
-func (h *SpoofHandle) HandleReqData(client *commands.MessageClient, data []byte) error {
-	var req protos.SpoofReq
-	err := json.Unmarshal(data, &req)
-	if err != nil {
-		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
-	}
-
-	switch req.Operation {
-	case protos.OperationNop:
-		return handle.ResponseRedirectData(client, []byte("{}"))
-	case protos.OperationList:
-		data, err = h.handleOpList(&req)
-	case protos.OperationListSpoofTypes:
-		data, err = h.handleOpListTypes(&req)
-	case protos.OperationAdd:
-		data, err = h.handleOpAdd(&req)
-	case protos.OperationDel:
-		data, err = h.handleOpDel(&req)
-	}
-	if err != nil {
-		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
-	}
-	return handle.ResponseRedirectData(client, data)
-}
-
-func (h *SpoofHandle) handleOpList(*protos.SpoofReq) ([]byte, error) {
-	resp := protos.SpoofResp{Rules: make([]protos.SpoofRule, 0, len(h.v4RulesIDMap))}
-
+func (h *SpoofHandle) GetSpoofRules() ([]protos.SpoofRule, error) {
 	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	rules := make([]protos.SpoofRule, 0, len(h.v4RulesIDMap))
 	for rule, id := range h.v4RulesIDMap {
-		resp.Rules = append(resp.Rules, protos.SpoofRule{
-			ID:          id,
-			SpoofRuleV4: rule,
-		})
+		rules = append(rules, protos.SpoofRule{ID: id, SpoofRuleV4: rule})
 	}
-	h.mu.RUnlock()
-
-	return json.Marshal(resp)
+	return rules, nil
 }
 
-func (h *SpoofHandle) handleOpListTypes(*protos.SpoofReq) ([]byte, error) {
-	resp := protos.SpoofResp{Rules: []protos.SpoofRule{
-		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeICMPEchoReply}},
-		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeTCPReset}},
-		{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeTCPResetSYN}},
-	}}
-	return json.Marshal(resp)
+func (h *SpoofHandle) AddSpoofRule(rule protos.SpoofRule) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	_, ok := h.v4RulesIDMap[rule.SpoofRuleV4]
+	if ok {
+		return fmt.Errorf("duplicate spoof rule")
+	}
+
+	h.id++
+	h.v4RulesIDMap[rule.SpoofRuleV4] = h.id
+	h.v4DstIPTree.Add(patricia.NewIPv4Address(rule.SpoofRuleV4.DstIP, uint(rule.SpoofRuleV4.DstIPPrefixLen)), rule.SpoofRuleV4, nil)
+	return nil
 }
 
-func (h *SpoofHandle) handleOpAdd(req *protos.SpoofReq) ([]byte, error) {
-	for _, rule := range req.Rules {
-		l := logrus.WithField("rule", rule.String())
+func treeMatchFn(_, _ protos.SpoofRuleV4) bool { return true }
 
-		h.mu.RLock()
-		id, ok := h.v4RulesIDMap[rule.SpoofRuleV4]
-		h.mu.RUnlock()
-		if ok {
-			l.WithField("id", id).Debug("Add duplicate spoof rule")
-			continue
-		}
+func (h *SpoofHandle) DelSpoofRule(rule protos.SpoofRule) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-		h.mu.Lock()
-		h.id++
-		h.v4RulesIDMap[rule.SpoofRuleV4] = h.id
-		h.v4DstIPTree.Add(patricia.NewIPv4Address(rule.SpoofRuleV4.DstIP, uint(rule.SpoofRuleV4.DstIPPrefixLen)), rule.SpoofRuleV4, nil)
-		h.mu.Unlock()
-
-		l.WithField("id", h.id).Debug("Add spoof rule")
+	_, ok := h.v4RulesIDMap[rule.SpoofRuleV4]
+	if !ok {
+		return fmt.Errorf("no matched spoof rule")
 	}
-	return []byte("{}"), nil
-}
 
-func (h *SpoofHandle) handleOpDel(req *protos.SpoofReq) ([]byte, error) {
-	for _, rule := range req.Rules {
-		l := logrus.WithField("rule", rule.String())
+	delete(h.v4RulesIDMap, rule.SpoofRuleV4)
+	addr := patricia.NewIPv4Address(rule.SpoofRuleV4.DstIP, uint(rule.SpoofRuleV4.DstIPPrefixLen))
+	h.v4DstIPTree.Delete(addr, treeMatchFn, rule.SpoofRuleV4)
 
-		h.mu.RLock()
-		id, ok := h.v4RulesIDMap[rule.SpoofRuleV4]
-		h.mu.RUnlock()
-		if !ok {
-			l.Debug("Delete no matched spoof rule")
-			continue
-		}
-		l.WithField("id", id).Debug("Delete spoof rule")
-
-		h.mu.Lock()
-		delete(h.v4RulesIDMap, rule.SpoofRuleV4)
-		h.v4DstIPTree.Delete(patricia.NewIPv4Address(rule.SpoofRuleV4.DstIP, uint(rule.SpoofRuleV4.DstIPPrefixLen)), func(_, _ protos.SpoofRuleV4) bool { return true }, rule.SpoofRuleV4)
-		h.mu.Unlock()
-	}
-	return []byte("{}"), nil
+	return nil
 }
 
 func (h *SpoofHandle) HandlePacket(pkt *fastpkt.Packet) {

@@ -1,11 +1,14 @@
 package redirects
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 
 	"github.com/olekukonko/tablewriter"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/protos"
@@ -14,24 +17,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type spoofOpt struct {
-	showList  bool
-	showTypes bool
-	add       bool
-	del       bool
-	typ       protos.SpoofType
-	srcIPLPM  xdpprog.IPLpmKey
-	dstIPLPM  xdpprog.IPLpmKey
-	srcPort   uint16
-	dstPort   uint16
-}
-
 var spoofCmd = &cobra.Command{
 	Use:   protos.RedirectTypeSpoof.String(),
 	Short: "Traffic spoof based on rules",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		commands.SetVerbose()
-		return spoof{}.handleCommand()
+		var s SpoofCommand
+		return s.DoReq(opt.ifaceName, &opt.spoof)
 	},
 }
 
@@ -49,24 +41,85 @@ func init() {
 	redirectCmd.AddCommand(spoofCmd)
 }
 
-type spoof struct{}
+type SpoofOpt struct {
+	showList  bool
+	showTypes bool
+	add       bool
+	del       bool
+	typ       protos.SpoofType
+	srcIPLPM  xdpprog.IPLpmKey
+	dstIPLPM  xdpprog.IPLpmKey
+	srcPort   uint16
+	dstPort   uint16
+}
 
-func (s spoof) handleCommand() error {
-	if opt.spoof.showList {
-		return s.showList()
+type SpoofResolver interface {
+	GetSpoofRules() ([]protos.SpoofRule, error)
+	AddSpoofRule(rule protos.SpoofRule) error
+	DelSpoofRule(rule protos.SpoofRule) error
+}
+
+type SpoofCommand struct {
+	mu        *sync.Mutex
+	resolvers map[string]SpoofResolver
+}
+
+func NewSpoofCommand() *SpoofCommand {
+	return &SpoofCommand{
+		mu:        &sync.Mutex{},
+		resolvers: make(map[string]SpoofResolver),
+	}
+}
+
+func (SpoofCommand) RedirectType() protos.RedirectType {
+	return protos.RedirectTypeSpoof
+}
+
+// Client
+
+func (s *SpoofCommand) DoReq(ifaceName string, opt *SpoofOpt) error {
+	if opt.showList {
+		return s.DoReqShowList(ifaceName)
 	}
 
-	if opt.spoof.showTypes {
-		return s.showListTypes()
+	if opt.showTypes {
+		return s.DoReqShowTypes()
 	}
 
-	if opt.spoof.add {
-		return s.opRule(protos.OperationAdd)
+	if opt.add {
+		return s.DoReqEditRule(protos.OperationAdd, ifaceName, opt)
 	}
 
-	if opt.spoof.del {
-		return s.opRule(protos.OperationDel)
+	if opt.del {
+		return s.DoReqEditRule(protos.OperationDel, ifaceName, opt)
 	}
+	return nil
+}
+
+func (s *SpoofCommand) DoReqShowList(ifaceName string) error {
+	req := protos.SpoofReq{Operation: protos.OperationList, Interface: ifaceName}
+	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)
+	if err != nil {
+		return err
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"ID", "Interface", "Spoof Type", "Proto", "Src IP", "Dst IP", "Src Port", "Dst Port"})
+	table.SetAlignment(tablewriter.ALIGN_CENTER)
+	for _, iface := range resp.Interfaces {
+		sort.Sort(protos.SpoofRuleSlice(iface.Rules))
+		for _, rule := range iface.Rules {
+			table.Append([]string{
+				fmt.Sprintf("%d", rule.ID), iface.Interface, rule.SpoofType.String(),
+				formatProto(rule.Proto),
+				fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.SrcIP), rule.SrcIPPrefixLen),
+				fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.DstIP), rule.DstIPPrefixLen),
+				fmt.Sprintf("%d", rule.SrcPort), fmt.Sprintf("%d", rule.DstPort),
+			})
+		}
+	}
+	table.Render()
+
 	return nil
 }
 
@@ -83,32 +136,7 @@ func formatProto(proto uint16) string {
 	}
 }
 
-func (spoof) showList() error {
-	req := protos.SpoofReq{Operation: protos.OperationList}
-	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)
-	if err != nil {
-		return err
-	}
-	sort.Sort(protos.SpoofRuleSlice(resp.Rules))
-
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "Spoof Type", "Proto", "Src IP", "Dst IP", "Src Port", "Dst Port"})
-	table.SetAlignment(tablewriter.ALIGN_CENTER)
-	for _, rule := range resp.Rules {
-		table.Append([]string{
-			fmt.Sprintf("%d", rule.ID), rule.SpoofType.String(),
-			formatProto(rule.Proto),
-			fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.SrcIP), rule.SrcIPPrefixLen),
-			fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.DstIP), rule.DstIPPrefixLen),
-			fmt.Sprintf("%d", rule.SrcPort), fmt.Sprintf("%d", rule.DstPort),
-		})
-	}
-	table.Render()
-
-	return nil
-}
-
-func (spoof) showListTypes() error {
+func (s *SpoofCommand) DoReqShowTypes() error {
 	req := protos.SpoofReq{Operation: protos.OperationListSpoofTypes}
 	resp, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)
 	if err != nil {
@@ -118,26 +146,132 @@ func (spoof) showListTypes() error {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Supported Spoof Type"})
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
-	for _, typ := range resp.Rules {
-		table.Append([]string{typ.SpoofType.String()})
+	for _, typ := range resp.SupportedTypes {
+		table.Append([]string{typ.String()})
 	}
 	table.Render()
 
 	return nil
 }
 
-func (spoof) opRule(op protos.Operation) error {
-	req := protos.SpoofReq{Operation: op, Rules: []protos.SpoofRule{{
+func (s *SpoofCommand) DoReqEditRule(op protos.Operation, ifaceName string, opt *SpoofOpt) error {
+	req := protos.SpoofReq{Operation: op, Interface: ifaceName, Rules: []protos.SpoofRule{{
 		SpoofRuleV4: protos.SpoofRuleV4{
-			SpoofType:      opt.spoof.typ,
-			SrcPort:        opt.spoof.srcPort,
-			DstPort:        opt.spoof.dstPort,
-			SrcIPPrefixLen: uint8(opt.spoof.srcIPLPM.PrefixLen),
-			DstIPPrefixLen: uint8(opt.spoof.dstIPLPM.PrefixLen),
-			SrcIP:          opt.spoof.srcIPLPM.To4().Address,
-			DstIP:          opt.spoof.dstIPLPM.To4().Address,
+			SpoofType:      opt.typ,
+			SrcPort:        opt.srcPort,
+			DstPort:        opt.dstPort,
+			SrcIPPrefixLen: uint8(opt.srcIPLPM.PrefixLen),
+			DstIPPrefixLen: uint8(opt.dstIPLPM.PrefixLen),
+			SrcIP:          opt.srcIPLPM.To4().Address,
+			DstIP:          opt.dstIPLPM.To4().Address,
 		},
 	}}}
 	_, err := getResponse[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)
 	return err
+}
+
+// Server
+
+func (s *SpoofCommand) Register(ifaceName string, resolver SpoofResolver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resolvers[ifaceName] = resolver
+}
+
+func (s *SpoofCommand) Del(ifaceName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.resolvers, ifaceName)
+}
+
+func (s *SpoofCommand) HandleReqData(client *commands.MessageClient, data []byte) error {
+	var req protos.SpoofReq
+	err := json.Unmarshal(data, &req)
+	if err != nil {
+		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	switch req.Operation {
+	case protos.OperationNop:
+		return ResponseRedirectData(client, []byte("{}"))
+	case protos.OperationList:
+		data, err = s.handleOpList(req.Interface)
+	case protos.OperationListSpoofTypes:
+		data, err = s.handleOpListTypes(&req)
+	case protos.OperationAdd:
+		data, err = s.handleReqEdit(&req, func(sr SpoofResolver, r protos.SpoofRule) error { return sr.AddSpoofRule(r) })
+	case protos.OperationDel:
+		data, err = s.handleReqEdit(&req, func(sr SpoofResolver, r protos.SpoofRule) error { return sr.DelSpoofRule(r) })
+	}
+	if err != nil {
+		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
+	}
+	return ResponseRedirectData(client, data)
+}
+
+func (s *SpoofCommand) getResolvers(ifaceName string) (map[string]SpoofResolver, error) {
+	var resolvers map[string]SpoofResolver
+	if ifaceName != "" {
+		resolver, ok := s.resolvers[ifaceName]
+		if !ok {
+			return nil, fmt.Errorf("interface %s not found", ifaceName)
+		}
+		resolvers = map[string]SpoofResolver{ifaceName: resolver}
+	} else {
+		resolvers = s.resolvers
+	}
+	return resolvers, nil
+}
+
+func (s *SpoofCommand) handleOpList(ifaceName string) ([]byte, error) {
+	resolvers, err := s.getResolvers(ifaceName)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := protos.SpoofResp{Interfaces: make([]protos.SpoofInterfaceRule, 0, len(resolvers))}
+	for name, resolver := range resolvers {
+		rules, err := resolver.GetSpoofRules()
+		if err != nil {
+			return nil, err
+		}
+		resp.Interfaces = append(resp.Interfaces, protos.SpoofInterfaceRule{
+			Interface: name,
+			Rules:     rules,
+		})
+	}
+	return json.Marshal(resp)
+}
+
+func (s *SpoofCommand) handleOpListTypes(*protos.SpoofReq) ([]byte, error) {
+	resp := protos.SpoofResp{Interfaces: []protos.SpoofInterfaceRule{
+		{Rules: []protos.SpoofRule{
+			{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeICMPEchoReply}},
+			{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeTCPReset}},
+			{SpoofRuleV4: protos.SpoofRuleV4{SpoofType: protos.SpoofTypeTCPResetSYN}},
+		}},
+	}}
+	return json.Marshal(resp)
+}
+
+func (s *SpoofCommand) handleReqEdit(req *protos.SpoofReq, op func(SpoofResolver, protos.SpoofRule) error) ([]byte, error) {
+	resolvers, err := s.getResolvers(req.Interface)
+	if err != nil {
+		return nil, err
+	}
+
+	for ifaceName, resolver := range resolvers {
+		l := logrus.WithField("interface", ifaceName)
+		for _, rule := range req.Rules {
+			l.WithField("rule", rule.String()).Debug("Add spoof rule")
+			err := op(resolver, rule)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return []byte("{}"), nil
 }
