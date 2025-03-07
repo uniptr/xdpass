@@ -71,7 +71,7 @@ Then you can see the statistics output (with *-s 1*)
 |   SUM | 2883584 | 719924 | 187.4 MBytes | 374.4 MBits/s |   22451 |           0 |
 ```
 
-### filter
+### firewall
 
 To filter network packets by setting an IP or CIDR.
 

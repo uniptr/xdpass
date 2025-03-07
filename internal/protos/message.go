@@ -9,28 +9,28 @@ type Type int
 
 const (
 	TypeRedirect Type = iota + 1
-	TypeFilter
+	TypeFirewall
 	TypeInterface
 	TypeStats
 )
 
 const (
 	typeStrRedirect  = "redirect"
-	typeStrFilter    = "filter"
+	typeStrFirewall  = "firewall"
 	typeStrInterface = "interface"
 	typeStrStats     = "stats"
 )
 
 var typeLookup = map[string]Type{
 	typeStrRedirect:  TypeRedirect,
-	typeStrFilter:    TypeFilter,
+	typeStrFirewall:  TypeFirewall,
 	typeStrInterface: TypeInterface,
 	typeStrStats:     TypeStats,
 }
 
 var typeStrLookup = map[Type]string{
 	TypeRedirect:  typeStrRedirect,
-	TypeFilter:    typeStrFilter,
+	TypeFirewall:  typeStrFirewall,
 	TypeInterface: typeStrInterface,
 	TypeStats:     typeStrStats,
 }

@@ -19,11 +19,11 @@ func TestType(t *testing.T) {
 	}
 	assert.Equal(t, []byte(`{"type":"redirect"}`), data)
 
-	err = json.Unmarshal([]byte(`{"type":"filter"}`), &v)
+	err = json.Unmarshal([]byte(`{"type":"firewall"}`), &v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, v.T, TypeFilter)
+	assert.Equal(t, v.T, TypeFirewall)
 
 	// Invalid type
 	err = json.Unmarshal([]byte(`{"type":"foo"}`), &v)

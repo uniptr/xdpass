@@ -1,8 +1,8 @@
 #! /bin/bash
 
 # Firewall
-xdpass filter -i br1 --add --key 172.16.23.0/24
-xdpass filter -i br1 --list
+xdpass firewall -i br1 --add --key 172.16.23.0/24
+xdpass firewall -i br1 --list
 
 # Redirect
 

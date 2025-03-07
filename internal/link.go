@@ -11,10 +11,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/zxhio/xdpass/internal/commands"
+	"github.com/zxhio/xdpass/internal/commands/fwcmd"
 	"github.com/zxhio/xdpass/internal/commands/redirectcmd"
 	"github.com/zxhio/xdpass/internal/commands/statscmd"
 	"github.com/zxhio/xdpass/internal/exports"
-	"github.com/zxhio/xdpass/internal/firewall"
+	"github.com/zxhio/xdpass/internal/fw"
 	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect"
 	"github.com/zxhio/xdpass/pkg/fastpkt"
@@ -58,7 +59,7 @@ type LinkHandle struct {
 	*linkHandleOpts
 	*xdpprog.Objects
 	xsks     []*xdp.XDPSocket
-	firewall *firewall.Firewall
+	firewall *fw.Firewall
 	redirect *redirect.Redirect
 	server   *commands.MessageServer
 	closers  utils.NamedClosers
@@ -136,13 +137,8 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 		l.WithFields(logrus.Fields{"k": queueID, "v": s.SocketFD()}).Info("Update xsk map")
 	}
 
-	firewall, err := firewall.NewFirewall()
-	if err != nil {
-		closers.Close(nil)
-		return nil, err
-	}
-	firewall.Add(name, objs.IpLpmTrie)
-	l.Info("New firewall")
+	firewall := fw.NewFirewall(name, objs.IpLpmTrie)
+	exports.RegisterFirewallAPI(name, firewall)
 
 	redirect, err := redirect.NewRedirect(name)
 	if err != nil {
@@ -153,7 +149,7 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	l.Info("New redirect")
 
 	// TODO: add address option
-	server, err := commands.NewMessageServer(commands.DefUnixSock, firewall, redirectcmd.RedirectCommandHandle{}, statscmd.StatsCommandHandle{})
+	server, err := commands.NewMessageServer(commands.DefUnixSock, fwcmd.FirewallCommandHandle{}, redirectcmd.RedirectCommandHandle{}, statscmd.StatsCommandHandle{})
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
