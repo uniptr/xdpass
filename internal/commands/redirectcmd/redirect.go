@@ -36,13 +36,13 @@ var handles = map[protos.RedirectType]RedirectHandle{}
 
 func registerHandle(handle RedirectHandle) { handles[handle.RedirectType()] = handle }
 
-type RedirectCommand struct{}
+type RedirectCommandHandle struct{}
 
-func (RedirectCommand) CommandType() protos.Type {
+func (RedirectCommandHandle) CommandType() protos.Type {
 	return protos.TypeRedirect
 }
 
-func (RedirectCommand) HandleReqData(client *commands.MessageClient, data []byte) error {
+func (RedirectCommandHandle) HandleReqData(client *commands.MessageClient, data []byte) error {
 	logrus.WithField("data", string(data)).Debug("Handle redirect request data")
 
 	var req protos.RedirectReq

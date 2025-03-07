@@ -9,7 +9,7 @@ import (
 	_ "github.com/zxhio/xdpass/internal/commands/filters"
 	_ "github.com/zxhio/xdpass/internal/commands/interfaces"
 	_ "github.com/zxhio/xdpass/internal/commands/redirectcmd"
-	_ "github.com/zxhio/xdpass/internal/commands/stats"
+	_ "github.com/zxhio/xdpass/internal/commands/statscmd"
 )
 
 const (

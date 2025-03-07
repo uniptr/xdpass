@@ -12,7 +12,10 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/zxhio/xdpass/internal/commands"
 	"github.com/zxhio/xdpass/internal/commands/redirectcmd"
+	"github.com/zxhio/xdpass/internal/commands/statscmd"
+	"github.com/zxhio/xdpass/internal/exports"
 	"github.com/zxhio/xdpass/internal/firewall"
+	"github.com/zxhio/xdpass/internal/protos"
 	"github.com/zxhio/xdpass/internal/redirect"
 	"github.com/zxhio/xdpass/pkg/fastpkt"
 	"github.com/zxhio/xdpass/pkg/netutil"
@@ -57,7 +60,6 @@ type LinkHandle struct {
 	xsks     []*xdp.XDPSocket
 	firewall *firewall.Firewall
 	redirect *redirect.Redirect
-	stats    *Stats
 	server   *commands.MessageServer
 	closers  utils.NamedClosers
 }
@@ -150,26 +152,26 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	closers = append(closers, utils.NamedCloser{Name: "redirect.Redirect", Close: redirect.Close})
 	l.Info("New redirect")
 
-	stats := &Stats{xsks: xsks}
-
 	// TODO: add address option
-	server, err := commands.NewMessageServer(commands.DefUnixSock, firewall, stats, redirectcmd.RedirectCommand{})
+	server, err := commands.NewMessageServer(commands.DefUnixSock, firewall, redirectcmd.RedirectCommandHandle{}, statscmd.StatsCommandHandle{})
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
 	}
 	closers = append(closers, utils.NamedCloser{Name: "cmdconn.Server", Close: server.Close})
 
-	return &LinkHandle{
+	lh := &LinkHandle{
 		linkHandleOpts: &o,
 		xsks:           xsks,
 		Objects:        objs,
 		firewall:       firewall,
 		redirect:       redirect,
-		stats:          &Stats{xsks: xsks},
 		server:         server,
 		closers:        closers,
-	}, nil
+	}
+	exports.RegisterStatsAPI(name, lh)
+
+	return lh, nil
 }
 
 func (x *LinkHandle) Close() error {
@@ -291,6 +293,17 @@ func (x *LinkHandle) waitPoll() error {
 		return errors.Wrap(err, "unix.Poll")
 	}
 	return nil
+}
+
+func (x *LinkHandle) GetQueueStats() []protos.QueueStats {
+	stats := make([]protos.QueueStats, len(x.xsks))
+	for i, xsk := range x.xsks {
+		stats[i] = protos.QueueStats{
+			QueueID:    xsk.QueueID(),
+			Statistics: xsk.Stats(),
+		}
+	}
+	return stats
 }
 
 func setAffinityCPU(cpu int) error {

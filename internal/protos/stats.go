@@ -2,13 +2,20 @@ package protos
 
 import "github.com/zxhio/xdpass/pkg/netutil"
 
-type StatsReq struct{}
-
-type StatsResp struct {
-	Queues []StatsQueueID `json:"queues"`
+type StatsReq struct {
+	Interface string `json:"interface"`
 }
 
-type StatsQueueID struct {
+type StatsResp struct {
+	Interfaces []InterfaceStats `json:"interfaces"`
+}
+
+type InterfaceStats struct {
+	Interface string       `json:"interface"`
+	Queues    []QueueStats `json:"queues"`
+}
+
+type QueueStats struct {
 	QueueID uint32 `json:"queue_id"`
 	netutil.Statistics
 }
