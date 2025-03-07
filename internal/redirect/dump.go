@@ -1,4 +1,4 @@
-package dump
+package redirect
 
 import (
 	"context"
@@ -49,6 +49,7 @@ func (h *DumpHandle) txLoop() bool {
 			hook(data)
 		}
 		h.mu.RUnlock()
+		h.rxDataPool.Put(&data[0])
 	}
 	return true
 }

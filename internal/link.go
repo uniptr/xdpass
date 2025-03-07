@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/zxhio/xdpass/internal/commands"
-	"github.com/zxhio/xdpass/internal/commands/redirects"
+	"github.com/zxhio/xdpass/internal/commands/redirectcmd"
 	"github.com/zxhio/xdpass/internal/firewall"
 	"github.com/zxhio/xdpass/internal/redirect"
 	"github.com/zxhio/xdpass/pkg/fastpkt"
@@ -54,13 +54,12 @@ func WithLinkHandleCores(cores []int) LinkHandleOpt {
 type LinkHandle struct {
 	*linkHandleOpts
 	*xdpprog.Objects
-	xsks            []*xdp.XDPSocket
-	firewall        *firewall.Firewall
-	redirectCommand *redirects.RedirectCommand
-	redirect        *redirect.Redirect
-	stats           *Stats
-	server          *commands.MessageServer
-	closers         utils.NamedClosers
+	xsks     []*xdp.XDPSocket
+	firewall *firewall.Firewall
+	redirect *redirect.Redirect
+	stats    *Stats
+	server   *commands.MessageServer
+	closers  utils.NamedClosers
 }
 
 func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
@@ -143,8 +142,7 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	firewall.Add(name, objs.IpLpmTrie)
 	l.Info("New firewall")
 
-	redirectCommand := redirects.NewRedirectCommand()
-	redirect, err := redirect.NewRedirect(name, redirectCommand)
+	redirect, err := redirect.NewRedirect(name)
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
@@ -155,7 +153,7 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	stats := &Stats{xsks: xsks}
 
 	// TODO: add address option
-	server, err := commands.NewMessageServer(commands.DefUnixSock, firewall, stats, redirectCommand)
+	server, err := commands.NewMessageServer(commands.DefUnixSock, firewall, stats, redirectcmd.RedirectCommand{})
 	if err != nil {
 		closers.Close(nil)
 		return nil, err
@@ -163,15 +161,14 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	closers = append(closers, utils.NamedCloser{Name: "cmdconn.Server", Close: server.Close})
 
 	return &LinkHandle{
-		linkHandleOpts:  &o,
-		xsks:            xsks,
-		Objects:         objs,
-		firewall:        firewall,
-		redirectCommand: redirectCommand,
-		redirect:        redirect,
-		stats:           &Stats{xsks: xsks},
-		server:          server,
-		closers:         closers,
+		linkHandleOpts: &o,
+		xsks:           xsks,
+		Objects:        objs,
+		firewall:       firewall,
+		redirect:       redirect,
+		stats:          &Stats{xsks: xsks},
+		server:         server,
+		closers:        closers,
 	}, nil
 }
 

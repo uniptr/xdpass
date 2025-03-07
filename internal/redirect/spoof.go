@@ -1,4 +1,4 @@
-package spoof
+package redirect
 
 import (
 	"fmt"
@@ -45,7 +45,7 @@ func (h *SpoofHandle) Close() error {
 	return nil
 }
 
-func (h *SpoofHandle) GetSpoofRules() ([]protos.SpoofRule, error) {
+func (h *SpoofHandle) GetSpoofRules() []protos.SpoofRule {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -53,7 +53,7 @@ func (h *SpoofHandle) GetSpoofRules() ([]protos.SpoofRule, error) {
 	for rule, id := range h.v4RulesIDMap {
 		rules = append(rules, protos.SpoofRule{ID: id, SpoofRuleV4: rule})
 	}
-	return rules, nil
+	return rules
 }
 
 func (h *SpoofHandle) AddSpoofRule(rule protos.SpoofRule) error {

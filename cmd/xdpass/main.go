@@ -8,7 +8,7 @@ import (
 	"github.com/zxhio/xdpass/internal/commands"
 	_ "github.com/zxhio/xdpass/internal/commands/filters"
 	_ "github.com/zxhio/xdpass/internal/commands/interfaces"
-	_ "github.com/zxhio/xdpass/internal/commands/redirects"
+	_ "github.com/zxhio/xdpass/internal/commands/redirectcmd"
 	_ "github.com/zxhio/xdpass/internal/commands/stats"
 )
 

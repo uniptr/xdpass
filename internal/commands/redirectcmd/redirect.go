@@ -1,4 +1,4 @@
-package redirects
+package redirectcmd
 
 import (
 	"encoding/json"
@@ -9,7 +9,20 @@ import (
 	"github.com/zxhio/xdpass/internal/protos"
 )
 
-func ResponseRedirectData(client *commands.MessageClient, data []byte) error {
+func doRequest[Q, R any](redirectType protos.RedirectType, v *Q) (*R, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	req := protos.RedirectReq{RedirectType: redirectType, RedirectData: data}
+	resp, err := commands.GetMessage[protos.RedirectReq, R](protos.TypeRedirect, "", &req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func response(client *commands.MessageClient, data []byte) error {
 	resp := protos.MessageResp{Data: data, ErrorCode: 0}
 	return commands.Response(client, &resp)
 }
@@ -19,32 +32,17 @@ type RedirectHandle interface {
 	HandleReqData(client *commands.MessageClient, data []byte) error
 }
 
-type RedirectCommand struct {
-	handles map[protos.RedirectType]RedirectHandle
-}
+var handles = map[protos.RedirectType]RedirectHandle{}
 
-func NewRedirectCommand() *RedirectCommand {
-	dump := NewDumpCommand()
-	spoof := NewSpoofCommand()
-	tuntap := NewTuntapCommand()
-	return &RedirectCommand{
-		handles: map[protos.RedirectType]RedirectHandle{
-			dump.RedirectType():   dump,
-			spoof.RedirectType():  spoof,
-			tuntap.RedirectType(): tuntap,
-		},
-	}
-}
+func registerHandle(handle RedirectHandle) { handles[handle.RedirectType()] = handle }
+
+type RedirectCommand struct{}
 
 func (RedirectCommand) CommandType() protos.Type {
 	return protos.TypeRedirect
 }
 
-func (r *RedirectCommand) GetCommandHandle(redirectType protos.RedirectType) RedirectHandle {
-	return r.handles[redirectType]
-}
-
-func (r *RedirectCommand) HandleReqData(client *commands.MessageClient, data []byte) error {
+func (RedirectCommand) HandleReqData(client *commands.MessageClient, data []byte) error {
 	logrus.WithField("data", string(data)).Debug("Handle redirect request data")
 
 	var req protos.RedirectReq
@@ -52,7 +50,7 @@ func (r *RedirectCommand) HandleReqData(client *commands.MessageClient, data []b
 		return commands.ResponseErrorCode(client, err, protos.ErrorCode_InvalidRequest)
 	}
 
-	handle, ok := r.handles[req.RedirectType]
+	handle, ok := handles[req.RedirectType]
 	if !ok {
 		return commands.ResponseErrorCode(client, fmt.Errorf("invalid redirect type: %s", req.RedirectType), protos.ErrorCode_InvalidRequest)
 	}

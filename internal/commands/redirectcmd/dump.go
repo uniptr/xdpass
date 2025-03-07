@@ -1,4 +1,4 @@
-package redirects
+package redirectcmd
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/zxhio/xdpass/internal/commands"
+	"github.com/zxhio/xdpass/internal/exports"
 	"github.com/zxhio/xdpass/internal/protos"
 )
 
@@ -20,39 +21,21 @@ var dumpCmd = &cobra.Command{
 	Short: "Dump network traffic packets",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		commands.SetVerbose()
-		var dump DumpCommand
+		var dump DumpCommandClient
 		return dump.DoReq()
 	},
 }
 
 func init() {
 	redirectCmd.AddCommand(dumpCmd)
+	registerHandle(DumpCommandHandle{})
 }
 
-type DumpOpt struct {
-}
+type DumpOpt struct{}
 
-type DumpHook interface {
-	KeepPacketHook(context.Context, func([]byte))
-}
+type DumpCommandClient struct{}
 
-type DumpCommand struct {
-	mu        *sync.Mutex
-	dumpHooks map[string]DumpHook
-}
-
-func NewDumpCommand() *DumpCommand {
-	return &DumpCommand{
-		mu:        &sync.Mutex{},
-		dumpHooks: make(map[string]DumpHook),
-	}
-}
-
-func (DumpCommand) RedirectType() protos.RedirectType {
-	return protos.RedirectTypeDump
-}
-
-func (*DumpCommand) DoReq() error {
+func (DumpCommandClient) DoReq() error {
 	client, err := commands.GetMessageClient(commands.DefUnixSock, protos.TypeRedirect, "", &protos.RedirectReq{RedirectType: protos.RedirectTypeDump})
 	if err != nil {
 		return err
@@ -75,14 +58,17 @@ func (*DumpCommand) DoReq() error {
 	}
 }
 
-func (h *DumpCommand) HandleReqData(client *commands.MessageClient, data []byte) error {
+type DumpCommandHandle struct{}
+
+func (DumpCommandHandle) RedirectType() protos.RedirectType {
+	return protos.RedirectTypeDump
+}
+
+func (DumpCommandHandle) HandleReqData(client *commands.MessageClient, data []byte) error {
 	var req protos.DumpReq
 	if err := json.Unmarshal(data, &req); err != nil {
 		return commands.ResponseError(client, err)
 	}
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	defer func() {
 		client.Close()
@@ -93,16 +79,16 @@ func (h *DumpCommand) HandleReqData(client *commands.MessageClient, data []byte)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var hooks []DumpHook
+	var apis []exports.RedirectDumpAPI
 	if req.Interface != "" {
-		hook, ok := h.dumpHooks[req.Interface]
+		api, ok := exports.GetDumpAPI(req.Interface)
 		if !ok {
 			return commands.ResponseError(client, fmt.Errorf("interface %s not found", req.Interface))
 		}
-		hooks = append(hooks, hook)
+		apis = append(apis, api)
 	} else {
-		for _, hook := range h.dumpHooks {
-			hooks = append(hooks, hook)
+		for _, api := range exports.GetAllDumpAPIs() {
+			apis = append(apis, api)
 		}
 	}
 
@@ -117,20 +103,14 @@ func (h *DumpCommand) HandleReqData(client *commands.MessageClient, data []byte)
 	}()
 
 	wg := sync.WaitGroup{}
-	wg.Add(len(hooks))
-	for _, hook := range hooks {
-		go func(hook DumpHook) {
+	wg.Add(len(apis))
+	for _, api := range apis {
+		go func(api exports.RedirectDumpAPI) {
 			defer wg.Done()
-			hook.KeepPacketHook(ctx, func(pkt []byte) { client.Write(pkt) })
-		}(hook)
+			api.KeepPacketHook(ctx, func(pkt []byte) { client.Write(pkt) })
+		}(api)
 	}
 	wg.Wait()
 
 	return nil
-}
-
-func (d *DumpCommand) Register(ifaceName string, hook DumpHook) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.dumpHooks[ifaceName] = hook
 }

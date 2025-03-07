@@ -1,14 +1,13 @@
-package remote
+package redirect
 
 import (
 	"github.com/zxhio/xdpass/internal/protos"
-	"github.com/zxhio/xdpass/internal/redirect/handle"
 	"github.com/zxhio/xdpass/pkg/fastpkt"
 )
 
 type RemoteHandle struct{}
 
-func NewRemoteHandle() (handle.RedirectHandle, error) {
+func NewRemoteHandle() (RedirectHandle, error) {
 	return nil, protos.ErrNotImpl
 }
 
