@@ -2,31 +2,40 @@
 
 Utilizing XDP for manipulating network packets in user mode.
 
+
+## xdpassd
+
+Using XDP to filter or redirect packets to user space.
+
+Specific features, see **xdpass**.
+
 ## xdpass
 
-A tool for interacting with **xdpassd** and performing packet sending benchmarks.
+A tool for interacting with **xdpassd**.
 
 ### benchmark
 
-Construct packets based on command-line parameters for benchmark sending.
+> Run independently without interacting with **xdpassd**.
+
+Construct packets based on command-line parameters for transmit benchmark.
 
 Construct packets with at least two parameters
-1. *--interface*, special the interface for sending
-2. *--dst-ip*, special the destination ip
+1. `--interface -i`, special the interface
+2. `--dst-ip`, special the destination ip
 
 Use the protocol( **icmp**, **tcp** and **udp**) as a subcommand, where different
-subcommands correspond to specific protocol details, such as *--dst-port* for the **tcp** subcommand.
+subcommands correspond to specific protocol details, such as `--dst-port` for the **tcp** subcommand.
 
 Additionally, use
-- *--queue-id -q* to specify the queue id
-- *--total -n* to specify the number of packets to send
-- *--batch -b* to specify the batch size when *--rate-limit* is -1
-- *--rate-limit -r* to control the sending rate
-- *--rate-limit-prec -p* to specify the rate limit precision
-- *--stats-dur -s* to enable sending statistics
-- *--cores -c* to specify the cpu cores
+- `--queue-id -q` to specify the queue id
+- `--total -n` to specify the number of packets to send
+- `--batch -b` to specify the batch size when *--rate-limit* is -1
+- `--rate-limit -r` to control the sending rate
+- `--rate-limit-prec -p` to specify the rate limit precision
+- `--stats-dur -s` to enable sending statistics
+- `--cores -c` to specify the cpu cores
 
-For *--xdp-copy* and *--xdp-zero-copy* options:
+For `--xdp-copy` and `--xdp-zero-copy` options:
 > Some drivers require specifying the use of copy mode to consume TX data.
 > Similarly, these drivers may only support loading XDP programs in generic mode.
 
@@ -60,7 +69,7 @@ $ xdpass bench tcp -i br1 --src-mac 6a:10:e9:37:63:ac --dst-mac 72:18:fd:f4:fa:b
     --src-port 1234 --dst-port 1234 --PSH --ACK --seq 1234567890 --payload "hello"
 ```
 
-Then you can see the statistics output (with *-s 1*)
+Then you can see the statistics output (with `-s 1`)
 ```txt
 | QUEUE | TX PKTS | TX PPS |   TX BYTES   |    TX BPS     | TX IOPS | TX ERR IOPS |
 +-------+---------+--------+--------------+---------------+---------+-------------+
@@ -73,44 +82,75 @@ Then you can see the statistics output (with *-s 1*)
 
 ### firewall
 
-To filter network packets by setting an IP or CIDR.
+Manage access to the XDP program IP filter.
+
+The IP filter key could be `IP`, e.g. 192.168.1.1. Or `CIDR`, e.g. 192.168.1.0/24.
+
+- `--interface -i` specify the network interface to operate on; empty means operating on all network interfaces.
+- `--add -a / --del -d` specify operation type.
+- `--key` specify filter ip key.
+
+e.g. Add 192.168.1.2 (or 192.168.1.2/32) to firewall on interface br1.
+```shell
+$ xdpass fw -i br1 --add --key 192.168.1.2
+```
 
 ### stats
 
 Display a live stream of network traffic statistics.
 
-Specify output duration by `--duration -d`, e.g. output per 10s
+Specify interface by `--interface -i`, empty interface means output all interface's stats.
+
+Specify output duration by `--duration -d`, e.g. output per 10s on interface br1
 ```shell
-$ xdpass stats -d 10s
+$ xdpass stats -i br1 -d 10s
 ```
 
-## xdpassd
 
-Using XDP to filter or redirect packets to user space.
+### dump
 
+Redirect network traffic and output in a more human-friendly format to the standard output.
 
-### redirect
+Specify interface by `--interface -i`, empty interface means output all interface's packets.
 
-Redirect network traffic. 
-
-#### dump
-
-Dump network packets to stdout.
-
+e.g. Dump packets on interface br1.
 ```shell
-$ ./xdpass redirect dump
+$ ./xdpass dump -i br1
 ```
 
-#### spoof
-TODO
+### spoof
 
-#### tuntap
+Redirect network traffic and response spoofed traffic based on rule spoof types.
 
-Redirect network packets to tuntap devices.
+- `--interface -i` specify interface, alse could be empty.
+- `--list` `--add` or `--del` manage spoof rules.
+- `--dst-ip` `--dst-port` and `--dst-ip` `--dst-port` special rule addresses.
+- `spoof-type` special spoof type
+- `--list-spoof-types` show supported types
+    - tcp-reset
+    - tcp-syn-reset
+    - icmp-echo-reply
 
-##### Usage
+e.g. Return ICMP echo reply packet for ICMP echo packets originating from interface br1 with source IPs in the 172.16.23.0/24 range and destination IPs in the 172.16.23.0/24 range.
+```shell
+$ xdpass spoof -i br1 --add --src-ip 172.16.23.0/24 --dst-ip 172.16.23.0/24 --spoof-type icmp-echo-reply
+```
 
-You can see the packets on the `<DEVICES>` interface by capture services.
+### tuntap
+
+Redirect network traffic to tuntap devices.
+
+- `--add-tun -U` add tun devices.
+- `--add-tap -A` add tap devices.
+- `--del -D` delete tuntap devices
+- `--list` show tuntap devices info.
+
+e.g. Add tun devices tun0 and tun1
+```shell
+$ ./xdpass tuntap --add-tun tun0,tun1
+```
+
+You can see the packets on this tun/tap devices by capture services.
 
 e.g. tcpdump
 ```shell
@@ -133,40 +173,15 @@ $ tail -n 1 /var/log/suricata/fast.log
 02/24/2025-09:32:26.634435  [**] [1:9010012:1] ICMP echo v4 connection [**] [Classification: (null)] [Priority: 3] {ICMP} 172.16.23.2:8 -> 172.16.23.1:0
 ```
 
-##### Commands
-
-Use `--add-tun -U` to add tun devices.
-```shell
-$ ./xdpass redirect tuntap -U tun0
-```
-
-Use `--add-tap -A` to add tap devices.
-```shell
-$ ./xdpass redirect tuntap -A tap0
-```
-
-Use `--del -D` to delete tuntap devices.
-```shell
-$ ./xdpass redirect tuntap -D tun0,tap0
-```
-
-Use `--list -l` to show tuntap devices info.
-```shell
-$ ./xdpass redirect tuntap --list
-+-------+--------+------+
-| INDEX | DEVICE | MODE |
-+-------+--------+------+
-|   1   |  tun0  | tun  |
-|   2   |  tap0  | tap  |
-+-------+--------+------+
-```
-
 ## scripts
 
 ### make_test_env.sh
 
-Create a environment with a bridge and two namespaces for testing.
+Create a environment with a bridge and namespaces for testing.
 
 ```shell
 $ ./scripts/make_test_env.sh add
 ```
+
+## TODO
+- Support ipv6
