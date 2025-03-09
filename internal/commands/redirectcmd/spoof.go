@@ -83,13 +83,14 @@ func (SpoofCommandClient) DoReqShowList(ifaceName string) error {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"ID", "Interface", "Spoof Type", "Proto", "Src IP", "Dst IP", "Src Port", "Dst Port"})
+	table.SetHeader([]string{"Interface", "ID", "Spoof Type", "Proto", "Src IP", "Dst IP", "Src Port", "Dst Port"})
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
+	table.SetAutoMergeCellsByColumnIndex([]int{0})
 	for _, iface := range resp.Interfaces {
 		sort.Sort(protos.SpoofRuleSlice(iface.Rules))
 		for _, rule := range iface.Rules {
 			table.Append([]string{
-				fmt.Sprintf("%d", rule.ID), iface.Interface, rule.SpoofType.String(),
+				iface.Interface, fmt.Sprintf("%d", rule.ID), rule.SpoofType.String(),
 				formatProto(rule.Proto),
 				fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.SrcIP), rule.SrcIPPrefixLen),
 				fmt.Sprintf("%s/%d", netutil.Uint32ToIPv4(rule.DstIP), rule.DstIPPrefixLen),

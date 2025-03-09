@@ -10,10 +10,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
-	"github.com/zxhio/xdpass/internal/commands"
-	"github.com/zxhio/xdpass/internal/commands/fwcmd"
-	"github.com/zxhio/xdpass/internal/commands/redirectcmd"
-	"github.com/zxhio/xdpass/internal/commands/statscmd"
 	"github.com/zxhio/xdpass/internal/exports"
 	"github.com/zxhio/xdpass/internal/fw"
 	"github.com/zxhio/xdpass/internal/protos"
@@ -56,12 +52,12 @@ func WithLinkHandleCores(cores []int) LinkHandleOpt {
 }
 
 type LinkHandle struct {
+	name string
 	*linkHandleOpts
 	*xdpprog.Objects
 	xsks     []*xdp.XDPSocket
 	firewall *fw.Firewall
 	redirect *redirect.Redirect
-	server   *commands.MessageServer
 	closers  utils.NamedClosers
 }
 
@@ -148,21 +144,13 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	closers = append(closers, utils.NamedCloser{Name: "redirect.Redirect", Close: redirect.Close})
 	l.Info("New redirect")
 
-	// TODO: add address option
-	server, err := commands.NewMessageServer(commands.DefUnixSock, fwcmd.FirewallCommandHandle{}, redirectcmd.RedirectCommandHandle{}, statscmd.StatsCommandHandle{})
-	if err != nil {
-		closers.Close(nil)
-		return nil, err
-	}
-	closers = append(closers, utils.NamedCloser{Name: "cmdconn.Server", Close: server.Close})
-
 	lh := &LinkHandle{
+		name:           name,
 		linkHandleOpts: &o,
 		xsks:           xsks,
 		Objects:        objs,
 		firewall:       firewall,
 		redirect:       redirect,
-		server:         server,
 		closers:        closers,
 	}
 	exports.RegisterStatsAPI(name, lh)
@@ -171,7 +159,11 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 }
 
 func (x *LinkHandle) Close() error {
-	x.closers.Close(nil)
+	x.closers.Close(&utils.CloseOpt{
+		ReverseOrder: true,
+		Output:       logrus.WithField("iface", x.name).Info,
+		ErrorOutput:  logrus.WithField("iface", x.name).Error,
+	})
 	return nil
 }
 
@@ -186,9 +178,6 @@ func (x *LinkHandle) Run(ctx context.Context) error {
 		<-ctx.Done()
 		done = true
 	}()
-
-	// Close in r.closers, not use ctx args
-	go x.server.Serve(context.Background())
 
 	var xskGroups []*xskGroup
 	cores := x.cores[:min(len(x.xsks), len(x.cores))]

@@ -4,16 +4,21 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 	"github.com/zxhio/xdpass/internal"
+	"github.com/zxhio/xdpass/internal/commands"
+	"github.com/zxhio/xdpass/internal/commands/fwcmd"
+	"github.com/zxhio/xdpass/internal/commands/redirectcmd"
+	"github.com/zxhio/xdpass/internal/commands/statscmd"
 	"github.com/zxhio/xdpass/pkg/xdp"
 )
 
 var opt struct {
-	ifaceName   string
+	ifaces      []string
 	queueID     int
 	pollTimeout int
 	verbose     bool
@@ -35,7 +40,7 @@ type bindFlagsOpt struct {
 }
 
 func main() {
-	pflag.StringVarP(&opt.ifaceName, "interface", "i", "", "Interface name")
+	pflag.StringSliceVarP(&opt.ifaces, "interfaces", "i", []string{}, "Interface name list")
 	pflag.IntVarP(&opt.queueID, "queue-id", "q", 0, "Interface rx queue index")
 	pflag.IntVar(&opt.pollTimeout, "poll", 0, "Poll timeout (us), 0 means not use poll")
 	pflag.IntSliceVarP(&opt.cores, "cores", "c", []int{-1}, "Affinity cpu cores, -1 not set, cores must <= queues")
@@ -67,6 +72,13 @@ func main() {
 		logrus.WithField("sig", sig).Info("Recv signal")
 	}()
 
+	server, err := commands.NewMessageServer(commands.DefUnixSock, fwcmd.FirewallCommandHandle{}, redirectcmd.RedirectCommandHandle{}, statscmd.StatsCommandHandle{})
+	if err != nil {
+		logrus.WithField("err", err).Fatal("Fail to create message server")
+	}
+	defer server.Close()
+	go server.Serve(ctx)
+
 	attachMode := xdp.XDPAttachModeGeneric
 	if opt.attachModeNative {
 		attachMode = xdp.XDPAttachModeNative
@@ -83,20 +95,29 @@ func main() {
 	if opt.bindFlagsNoNeedWakeup {
 		xdpOpts = append(xdpOpts, xdp.WithNoNeedWakeup())
 	}
-
-	link, err := internal.NewLinkHandle(opt.ifaceName,
+	opts := []internal.LinkHandleOpt{
 		internal.WithLinkQueueID(opt.queueID),
 		internal.WithLinkXDPFlags(attachMode, xdpOpts...),
 		internal.WithLinkHandleTimeout(opt.pollTimeout),
 		internal.WithLinkHandleCores(opt.cores),
-	)
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(len(opt.ifaces))
+	for _, iface := range opt.ifaces {
+		go func(iface string) {
+			defer wg.Done()
+			newLinkHandle(ctx, iface, opts...)
+		}(iface)
+	}
+	wg.Wait()
+}
+
+func newLinkHandle(ctx context.Context, iface string, opts ...internal.LinkHandleOpt) error {
+	link, err := internal.NewLinkHandle(iface, opts...)
 	if err != nil {
-		logrus.WithError(err).Fatal("Fatal to new packet rx")
+		return err
 	}
 	defer link.Close()
-
-	err = link.Run(ctx)
-	if err != nil {
-		logrus.WithError(err).Fatal("Fatal to serve rx")
-	}
+	return link.Run(ctx)
 }

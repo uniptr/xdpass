@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/olekukonko/tablewriter"
@@ -26,12 +27,14 @@ var statsCommand = &cobra.Command{
 }
 
 func init() {
-	statsCommand.Flags().DurationVarP(&opt.stats, "duration", "d", time.Second*3, "Statistics duration")
+	commands.SetFlagsInterface(statsCommand.Flags(), &opt.Interface)
+	statsCommand.Flags().DurationVarP(&opt.StatsDur, "duration", "d", time.Second*3, "Statistics duration")
 	commands.Register(statsCommand)
 }
 
 type StatsOpt struct {
-	stats time.Duration
+	Interface string
+	StatsDur  time.Duration
 }
 
 var opt StatsOpt
@@ -39,28 +42,34 @@ var opt StatsOpt
 type StatsCommandClient struct{}
 
 func (StatsCommandClient) DoReq(opt StatsOpt) error {
-	prev := make(map[uint32]netutil.Statistics)
+	statsKey := func(iface string, queueID uint32) string {
+		return fmt.Sprintf("%s:%d", iface, queueID)
+	}
+	prev := make(map[string]netutil.Statistics)
 
-	timer := time.NewTicker(opt.stats)
+	timer := time.NewTicker(opt.StatsDur)
 	for range timer.C {
 		tbl := tablewriter.NewWriter(os.Stdout)
 		tbl.SetHeader([]string{"interface", "queue", "rx_pkts", "rx_pps", "tx_pkts", "tx_pps", "rx_bytes", "rx_bps", "rx_iops", "rx_err_iops"})
-		tbl.SetAutoMergeCells(true)
+		tbl.SetAutoMergeCellsByColumnIndex([]int{0})
 		tbl.SetAlignment(tablewriter.ALIGN_CENTER)
 
 		sum := struct {
 			netutil.Statistics
 			netutil.StatisticsRate
 		}{}
-		resp, err := commands.GetMessageByAddr[protos.StatsReq, protos.StatsResp](commands.DefUnixSock, protos.TypeStats, "", nil)
+
+		req := &protos.StatsReq{Interface: opt.Interface}
+		resp, err := commands.GetMessageByAddr[protos.StatsReq, protos.StatsResp](commands.DefUnixSock, protos.TypeStats, "", req)
 		if err != nil {
 			return err
 		}
+		sort.Sort(statsSlice(resp.Interfaces))
 		for _, iface := range resp.Interfaces {
 			for _, queue := range iface.Queues {
 				stat := queue.Statistics
-				rate := stat.Rate(prev[queue.QueueID])
-				prev[queue.QueueID] = stat
+				rate := stat.Rate(prev[statsKey(iface.Interface, queue.QueueID)])
+				prev[statsKey(iface.Interface, queue.QueueID)] = stat
 
 				tbl.Append([]string{
 					iface.Interface,
@@ -88,7 +97,7 @@ func (StatsCommandClient) DoReq(opt StatsOpt) error {
 
 		tbl.SetFooter([]string{
 			"SUM",
-			"",
+			fmt.Sprintf("%d", len(resp.Interfaces)),
 			fmt.Sprintf("%d", sum.RxPackets),
 			fmt.Sprintf("%.0f", sum.RxPPS),
 			fmt.Sprintf("%d", sum.TxPackets),
@@ -104,6 +113,12 @@ func (StatsCommandClient) DoReq(opt StatsOpt) error {
 
 	return nil
 }
+
+type statsSlice []protos.InterfaceStats
+
+func (s statsSlice) Len() int           { return len(s) }
+func (s statsSlice) Less(i, j int) bool { return s[i].Interface < s[j].Interface }
+func (s statsSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 type StatsCommandHandle struct{}
 

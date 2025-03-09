@@ -167,6 +167,8 @@ func (s *MessageServer) handleConn(conn net.Conn) {
 		return
 	}
 
+	logrus.WithField("data", string(data)).Debug("New command")
+
 	var req protos.MessageReq
 	err = json.Unmarshal(data, &req)
 	if err != nil {
