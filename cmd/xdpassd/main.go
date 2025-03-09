@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/zxhio/xdpass/internal/commands/fwcmd"
 	"github.com/zxhio/xdpass/internal/commands/redirectcmd"
 	"github.com/zxhio/xdpass/internal/commands/statscmd"
+	"github.com/zxhio/xdpass/pkg/builder"
 	"github.com/zxhio/xdpass/pkg/xdp"
 )
 
@@ -25,6 +27,7 @@ var opt struct {
 	cores       []int
 	attachModeOpt
 	bindFlagsOpt
+	version bool
 }
 
 type attachModeOpt struct {
@@ -45,6 +48,7 @@ func main() {
 	pflag.IntVar(&opt.pollTimeout, "poll", 0, "Poll timeout (us), 0 means not use poll")
 	pflag.IntSliceVarP(&opt.cores, "cores", "c", []int{-1}, "Affinity cpu cores, -1 not set, cores must <= queues")
 	pflag.BoolVarP(&opt.verbose, "verbose", "v", false, "Verbose output")
+	pflag.BoolVarP(&opt.version, "version", "V", false, "Prints the build information")
 
 	// attach mode
 	pflag.BoolVar(&opt.attachModeGeneric, xdp.XDPAttachModeStrGeneric, false, "Attach in SKB (AKA generic) mode")
@@ -56,6 +60,11 @@ func main() {
 	pflag.BoolVar(&opt.bindFlagsXSKZeroCopy, xdp.XSKBindFlagsStrZeroCopy, false, "Force zero-copy mode")
 	pflag.BoolVar(&opt.bindFlagsNoNeedWakeup, "no-need-wakeup", false, "Disable need wakeup flag")
 	pflag.Parse()
+
+	if opt.version {
+		fmt.Println(builder.BuildInfo())
+		return
+	}
 
 	if opt.verbose {
 		logrus.SetLevel(logrus.DebugLevel)

@@ -1,12 +1,23 @@
 package commands
 
 import (
+	"fmt"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/zxhio/xdpass/pkg/builder"
 )
 
 var root cobra.Command
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Prints the build information",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(builder.BuildInfo())
+	},
+}
 
 var opt struct {
 	verbose bool
@@ -14,6 +25,7 @@ var opt struct {
 
 func init() {
 	root.PersistentFlags().BoolVarP(&opt.verbose, "verbose", "v", false, "Verbose output")
+	root.AddCommand(versionCmd)
 }
 
 func GetCommand(use, short string) cobra.Command {
