@@ -19,11 +19,11 @@ type Redirect struct {
 	closers utils.NamedClosers
 }
 
-func NewRedirect(ifaceName string) (*Redirect, error) {
+func NewRedirect(ifaceName string, frameSize int) (*Redirect, error) {
 	handles := map[protos.RedirectType]RedirectHandle{}
 
 	// Dump
-	dump, err := NewDumpHandle()
+	dump, err := NewDumpHandle(frameSize)
 	if err != nil {
 		return nil, err
 	}

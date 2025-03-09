@@ -27,7 +27,7 @@ func NewXDPUmem(sockfd int, opts ...XDPOpt) (*XDPUmem, error) {
 	}
 
 	// Check umem size valid
-	if o.FrameSize != 2048 && o.FrameSize != 4096 {
+	if o.FrameSize != UmemFrameSize2048 && o.FrameSize != UmemFrameSize4096 {
 		return nil, fmt.Errorf("invalid size of frame %d: must be either 2048 or 4096", o.FrameSize)
 	}
 	if bits.OnesCount32(o.FrameNum) != 1 {

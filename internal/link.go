@@ -113,7 +113,7 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 
 	var xsks []*xdp.XDPSocket
 	for _, queueID := range queues {
-		s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(queueID), append(o.xdpOpts, xdp.WithFrameSize(2048))...)
+		s, err := xdp.NewXDPSocket(uint32(ifaceLink.Attrs().Index), uint32(queueID), append(o.xdpOpts, xdp.WithFrameSize(xdp.UmemFrameSize2048))...)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +136,7 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	firewall := fw.NewFirewall(name, objs.IpLpmTrie)
 	exports.RegisterFirewallAPI(name, firewall)
 
-	redirect, err := redirect.NewRedirect(name)
+	redirect, err := redirect.NewRedirect(name, xdp.UmemFrameSize2048)
 	if err != nil {
 		closers.Close(nil)
 		return nil, err

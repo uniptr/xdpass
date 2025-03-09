@@ -15,7 +15,9 @@ const (
 	ConsRingDefaultDescs     = 2048 // For Rx/Completion queue
 	ProdRingDefaultDescs     = 2048 // For Tx/Fill queue
 	UmemDefaultFrameNum      = 4096
-	UmemDefaultFrameSize     = 4096
+	UmemFrameSize2048        = 2048
+	UmemFrameSize4096        = 4096
+	UmemDefaultFrameSize     = UmemFrameSize4096
 	UmemDefaultFrameHeadroom = 0
 	UmemDefaultFlags         = 0
 
