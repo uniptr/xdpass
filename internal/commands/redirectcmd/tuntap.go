@@ -15,13 +15,26 @@ import (
 )
 
 func init() {
-	// Tuntap
-	commands.SetFlagsList(tunCmd.Flags(), &opt.tuntap.ShowList, "List tuntap devices info")
-	tunCmd.Flags().StringSliceVarP(&opt.tuntap.AddTuns, "add-tun", "U", []string{}, "Add tun devices")
-	tunCmd.Flags().StringSliceVarP(&opt.tuntap.AddTaps, "add-tap", "A", []string{}, "Add tap devices")
-	tunCmd.Flags().StringSliceVarP(&opt.tuntap.DelDevices, "del", "D", []string{}, "Delete tuntap devices")
+	commands.SetFlagsInterface(tunCmd.Flags(), &tuntapOpt.Interface)
+	commands.SetFlagsList(tunCmd.Flags(), &tuntapOpt.ShowList, "List tuntap devices info")
+	tunCmd.Flags().StringSliceVarP(&tuntapOpt.AddTuns, "add-tun", "U", []string{}, "Add tun devices")
+	tunCmd.Flags().StringSliceVarP(&tuntapOpt.AddTaps, "add-tap", "A", []string{}, "Add tap devices")
+	tunCmd.Flags().StringSliceVarP(&tuntapOpt.DelDevices, "del", "D", []string{}, "Delete tuntap devices")
+
+	commands.Register(tunCmd)
 	redirectCmd.AddCommand(tunCmd)
+
 	registerHandle(TuntapCommandHandle{})
+}
+
+var tuntapOpt TuntapOpt
+
+type TuntapOpt struct {
+	Interface  string
+	ShowList   bool
+	AddTuns    []string
+	AddTaps    []string
+	DelDevices []string
 }
 
 var tunCmd = &cobra.Command{
@@ -30,31 +43,24 @@ var tunCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		commands.SetVerbose()
 		var t TuntapCommandClient
-		return t.DoReq(opt.ifaceName, &opt.tuntap)
+		return t.DoReq(&tuntapOpt)
 	},
-}
-
-type TuntapOpt struct {
-	ShowList   bool
-	AddTuns    []string
-	AddTaps    []string
-	DelDevices []string
 }
 
 type TuntapCommandClient struct{}
 
-func (t TuntapCommandClient) DoReq(ifaceName string, opt *TuntapOpt) error {
+func (t TuntapCommandClient) DoReq(opt *TuntapOpt) error {
 	if opt.ShowList {
-		return t.DoReqShow(ifaceName)
+		return t.DoReqShow(opt.Interface)
 	}
 	if len(opt.AddTuns) > 0 {
-		return t.DoReqEdit(protos.OperationAdd, ifaceName, opt.AddTuns, netlink.TUNTAP_MODE_TUN)
+		return t.DoReqEdit(protos.OperationAdd, opt.Interface, opt.AddTuns, netlink.TUNTAP_MODE_TUN)
 	}
 	if len(opt.AddTaps) > 0 {
-		return t.DoReqEdit(protos.OperationAdd, ifaceName, opt.AddTaps, netlink.TUNTAP_MODE_TAP)
+		return t.DoReqEdit(protos.OperationAdd, opt.Interface, opt.AddTaps, netlink.TUNTAP_MODE_TAP)
 	}
 	if len(opt.DelDevices) > 0 {
-		return t.DoReqEdit(protos.OperationDel, ifaceName, opt.DelDevices, netlink.TUNTAP_MODE_TAP)
+		return t.DoReqEdit(protos.OperationDel, opt.Interface, opt.DelDevices, 0)
 	}
 	return nil
 }

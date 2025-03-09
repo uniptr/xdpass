@@ -17,60 +17,67 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var spoofCmd = &cobra.Command{
-	Use:   protos.RedirectTypeSpoof.String(),
-	Short: "Traffic spoof based on rules",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		commands.SetVerbose()
-		var s SpoofCommandClient
-		return s.DoReq(opt.ifaceName, &opt.spoof)
-	},
-}
-
 func init() {
-	commands.SetFlagsList(spoofCmd.Flags(), &opt.spoof.showList, "Show spoof rule list")
-	spoofCmd.Flags().BoolVar(&opt.spoof.showTypes, "list-spoof-types", false, "Show supported spoof type list")
-	spoofCmd.Flags().BoolVar(&opt.spoof.add, "add", false, "Add spoof rule")
-	spoofCmd.Flags().BoolVar(&opt.spoof.del, "del", false, "Delete spoof rule")
-	spoofCmd.Flags().VarP(&opt.spoof.srcIPLPM, "src-ip", "s", "Source IP")
-	spoofCmd.Flags().VarP(&opt.spoof.dstIPLPM, "dst-ip", "d", "Destination IP")
-	spoofCmd.Flags().Uint16Var(&opt.spoof.srcPort, "src-port", 0, "Source port")
-	spoofCmd.Flags().Uint16Var(&opt.spoof.dstPort, "dst-port", 0, "Destination port")
-	spoofCmd.Flags().VarP(&opt.spoof.typ, "spoof-type", "t", "Type for spoof rule")
+	commands.SetFlagsInterface(spoofCmd.Flags(), &spoofOpt.Interface)
+	commands.SetFlagsList(spoofCmd.Flags(), &spoofOpt.ShowList, "Show spoof rule list")
+	spoofCmd.Flags().BoolVar(&spoofOpt.ShowTypes, "list-spoof-types", false, "Show supported spoof type list")
+	spoofCmd.Flags().BoolVar(&spoofOpt.Add, "add", false, "Add spoof rule")
+	spoofCmd.Flags().BoolVar(&spoofOpt.Del, "del", false, "Delete spoof rule")
+	spoofCmd.Flags().VarP(&spoofOpt.SrcIPLPM, "src-ip", "s", "Source IP")
+	spoofCmd.Flags().VarP(&spoofOpt.DstIPLPM, "dst-ip", "d", "Destination IP")
+	spoofCmd.Flags().Uint16Var(&spoofOpt.SrcPort, "src-port", 0, "Source port")
+	spoofCmd.Flags().Uint16Var(&spoofOpt.DstPort, "dst-port", 0, "Destination port")
+	spoofCmd.Flags().VarP(&spoofOpt.SpoofType, "spoof-type", "t", "Type for spoof rule")
 
+	commands.Register(spoofCmd)
 	redirectCmd.AddCommand(spoofCmd)
+
 	registerHandle(SpoofCommandHandle{})
 }
 
+var spoofOpt SpoofOpt
+
 type SpoofOpt struct {
-	showList  bool
-	showTypes bool
-	add       bool
-	del       bool
-	typ       protos.SpoofType
-	srcIPLPM  xdpprog.IPLpmKey
-	dstIPLPM  xdpprog.IPLpmKey
-	srcPort   uint16
-	dstPort   uint16
+	Interface string
+	ShowList  bool
+	ShowTypes bool
+	Add       bool
+	Del       bool
+	SpoofType protos.SpoofType
+	SrcIPLPM  xdpprog.IPLpmKey
+	DstIPLPM  xdpprog.IPLpmKey
+	SrcPort   uint16
+	DstPort   uint16
+}
+
+var spoofCmd = &cobra.Command{
+	Use:     protos.RedirectTypeSpoof.String(),
+	Short:   "Traffic spoof based on rules",
+	Aliases: []string{"redirect spoof"},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		commands.SetVerbose()
+		var s SpoofCommandClient
+		return s.DoReq(&spoofOpt)
+	},
 }
 
 type SpoofCommandClient struct{}
 
-func (s *SpoofCommandClient) DoReq(ifaceName string, opt *SpoofOpt) error {
-	if opt.showList {
-		return s.DoReqShowList(ifaceName)
+func (s *SpoofCommandClient) DoReq(opt *SpoofOpt) error {
+	if opt.ShowList {
+		return s.DoReqShowList(opt.Interface)
 	}
 
-	if opt.showTypes {
+	if opt.ShowTypes {
 		return s.DoReqShowTypes()
 	}
 
-	if opt.add {
-		return s.DoReqEditRule(protos.OperationAdd, ifaceName, opt)
+	if opt.Add {
+		return s.DoReqEditRule(protos.OperationAdd, opt)
 	}
 
-	if opt.del {
-		return s.DoReqEditRule(protos.OperationDel, ifaceName, opt)
+	if opt.Del {
+		return s.DoReqEditRule(protos.OperationDel, opt)
 	}
 	return nil
 }
@@ -134,16 +141,16 @@ func (SpoofCommandClient) DoReqShowTypes() error {
 	return nil
 }
 
-func (SpoofCommandClient) DoReqEditRule(op protos.Operation, ifaceName string, opt *SpoofOpt) error {
-	req := protos.SpoofReq{Operation: op, Interface: ifaceName, Rules: []protos.SpoofRule{{
+func (SpoofCommandClient) DoReqEditRule(op protos.Operation, opt *SpoofOpt) error {
+	req := protos.SpoofReq{Operation: op, Interface: opt.Interface, Rules: []protos.SpoofRule{{
 		SpoofRuleV4: protos.SpoofRuleV4{
-			SpoofType:      opt.typ,
-			SrcPort:        opt.srcPort,
-			DstPort:        opt.dstPort,
-			SrcIPPrefixLen: uint8(opt.srcIPLPM.PrefixLen),
-			DstIPPrefixLen: uint8(opt.dstIPLPM.PrefixLen),
-			SrcIP:          opt.srcIPLPM.To4().Address,
-			DstIP:          opt.dstIPLPM.To4().Address,
+			SpoofType:      opt.SpoofType,
+			SrcPort:        opt.SrcPort,
+			DstPort:        opt.DstPort,
+			SrcIPPrefixLen: uint8(opt.SrcIPLPM.PrefixLen),
+			DstIPPrefixLen: uint8(opt.DstIPLPM.PrefixLen),
+			SrcIP:          opt.SrcIPLPM.To4().Address,
+			DstIP:          opt.DstIPLPM.To4().Address,
 		},
 	}}}
 	_, err := doRequest[protos.SpoofReq, protos.SpoofResp](protos.RedirectTypeSpoof, &req)

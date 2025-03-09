@@ -24,6 +24,16 @@ func init() {
 	commands.Register(fwCmd)
 }
 
+var fwCmd = &cobra.Command{
+	Use:     protos.TypeFirewall.String(),
+	Short:   "Manage network traffic firewall",
+	Aliases: []string{"fw"},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		commands.SetVerbose()
+		return FirewallCommand{}.DoReq(&opt)
+	},
+}
+
 type FirwallOpt struct {
 	Interface string
 	ShowList  bool
@@ -33,15 +43,6 @@ type FirwallOpt struct {
 }
 
 var opt FirwallOpt
-
-var fwCmd = &cobra.Command{
-	Use:   protos.TypeFirewall.String(),
-	Short: "Manage network traffic firewall",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		commands.SetVerbose()
-		return FirewallCommand{}.DoReq(&opt)
-	},
-}
 
 type FirewallCommand struct{}
 

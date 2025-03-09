@@ -16,26 +16,33 @@ import (
 	"github.com/zxhio/xdpass/internal/protos"
 )
 
-var dumpCmd = &cobra.Command{
-	Use:   protos.RedirectTypeDump.String(),
-	Short: "Dump network traffic packets",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		commands.SetVerbose()
-		var dump DumpCommandClient
-		return dump.DoReq()
-	},
-}
-
 func init() {
+	commands.SetFlagsInterface(dumpCmd.Flags(), &dumpopt.Interface)
+	commands.Register(dumpCmd)
 	redirectCmd.AddCommand(dumpCmd)
+
 	registerHandle(DumpCommandHandle{})
 }
 
-type DumpOpt struct{}
+var dumpCmd = &cobra.Command{
+	Use:     protos.RedirectTypeDump.String(),
+	Aliases: []string{"redirect dump"},
+	Short:   "Dump network traffic packets",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		commands.SetVerbose()
+		return DumpCommandClient{}.DoReq(dumpopt)
+	},
+}
+
+var dumpopt DumpOpt
+
+type DumpOpt struct {
+	Interface string
+}
 
 type DumpCommandClient struct{}
 
-func (DumpCommandClient) DoReq() error {
+func (DumpCommandClient) DoReq(opt DumpOpt) error {
 	client, err := commands.GetMessageClient(commands.DefUnixSock, protos.TypeRedirect, "", &protos.RedirectReq{RedirectType: protos.RedirectTypeDump})
 	if err != nil {
 		return err

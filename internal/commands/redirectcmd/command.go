@@ -6,6 +6,22 @@ import (
 	"github.com/zxhio/xdpass/internal/protos"
 )
 
+func init() {
+	commands.SetFlagsInterface(redirectCmd.PersistentFlags(), &redirectOpt.Interface)
+
+	// Remote
+	commands.SetFlagsInterface(remoteCmd.PersistentFlags(), &remoteOpt.Interface)
+	commands.SetFlagsList(remoteCmd.Flags(), &remoteOpt.ShowList, "List remote address")
+	remoteCmd.Flags().StringVarP(&remoteOpt.Network, "network", "n", "tcp", "Address network (tcp|udp|unix)")
+	remoteCmd.Flags().StringVar(&remoteOpt.Add, "add", "", "Add remote address")
+	remoteCmd.Flags().StringVar(&remoteOpt.Del, "del", "", "Delete remote address")
+
+	commands.Register(redirectCmd)
+
+	redirectCmd.AddCommand(remoteCmd)
+	commands.Register(remoteCmd)
+}
+
 var redirectCmd = &cobra.Command{
 	Use:   protos.TypeRedirect.String(),
 	Short: "Redirect network traffic",
@@ -22,32 +38,19 @@ var remoteCmd = &cobra.Command{
 	},
 }
 
-type remoteOpt struct {
-	show    bool
-	add     string
-	del     string
-	network string
+var (
+	redirectOpt RedirectOpt
+	remoteOpt   RemoteOpt
+)
+
+type RedirectOpt struct {
+	Interface string
 }
 
-var opt struct {
-	ifaceName string
-
-	tuntap TuntapOpt
-	dump   DumpOpt
-	remote remoteOpt
-	spoof  SpoofOpt
-}
-
-func init() {
-	commands.SetFlagsInterface(redirectCmd.PersistentFlags(), &opt.ifaceName)
-
-	// Remote
-	commands.SetFlagsList(remoteCmd.Flags(), &opt.remote.show, "List remote address")
-	remoteCmd.Flags().StringVarP(&opt.remote.network, "network", "n", "tcp", "Address network (tcp|udp|unix)")
-	remoteCmd.Flags().StringVar(&opt.remote.add, "add", "", "Add remote address")
-	remoteCmd.Flags().StringVar(&opt.remote.del, "del", "", "Delete remote address")
-
-	redirectCmd.AddCommand(remoteCmd)
-
-	commands.Register(redirectCmd)
+type RemoteOpt struct {
+	Interface string
+	ShowList  bool
+	Add       string
+	Del       string
+	Network   string
 }
