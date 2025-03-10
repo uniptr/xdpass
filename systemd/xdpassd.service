@@ -1,0 +1,15 @@
+# /etc/systemd/system/xdpassd.service
+
+[Unit]
+Description=xdpassd daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/xdpassd
+Restart=on-failure
+RestartSec=10
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

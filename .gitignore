@@ -1,4 +1,3 @@
 cmd/xdpassd/xdpassd
 cmd/xdpass/xdpass
-xdpass
-xdpassd
+build/
