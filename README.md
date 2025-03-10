@@ -184,4 +184,9 @@ $ ./scripts/make_test_env.sh add
 ```
 
 ## TODO
-- Support ipv6
+- Add xdpassd systemd service support
+- Add xdpassd redirect traffic to remote support
+- Add whitelist and blacklist firewall support
+- Add IPv6 support
+- Add xdpassd gRPC API support
+- Add xdpassd RESTful API support

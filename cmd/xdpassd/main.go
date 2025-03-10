@@ -8,6 +8,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/BurntSushi/toml"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 	"github.com/zxhio/xdpass/internal"
@@ -15,54 +16,33 @@ import (
 	"github.com/zxhio/xdpass/internal/commands/fwcmd"
 	"github.com/zxhio/xdpass/internal/commands/redirectcmd"
 	"github.com/zxhio/xdpass/internal/commands/statscmd"
+	"github.com/zxhio/xdpass/internal/config"
 	"github.com/zxhio/xdpass/pkg/builder"
-	"github.com/zxhio/xdpass/pkg/xdp"
 )
 
 var opt struct {
-	ifaces      []string
-	queueID     int
-	pollTimeout int
-	verbose     bool
-	cores       []int
-	attachModeOpt
-	bindFlagsOpt
-	version bool
-}
-
-type attachModeOpt struct {
-	attachModeGeneric bool
-	attachModeNative  bool
-	attachModeOffload bool
-}
-
-type bindFlagsOpt struct {
-	bindFlagsXSKCopy      bool
-	bindFlagsXSKZeroCopy  bool
-	bindFlagsNoNeedWakeup bool
+	verbose    bool
+	version    bool
+	config     string
+	dumpConfig string
 }
 
 func main() {
-	pflag.StringSliceVarP(&opt.ifaces, "interfaces", "i", []string{}, "Interface name list")
-	pflag.IntVarP(&opt.queueID, "queue-id", "q", 0, "Interface rx queue index")
-	pflag.IntVar(&opt.pollTimeout, "poll", 0, "Poll timeout (us), 0 means not use poll")
-	pflag.IntSliceVarP(&opt.cores, "cores", "c", []int{-1}, "Affinity cpu cores, -1 not set, cores must <= queues")
 	pflag.BoolVarP(&opt.verbose, "verbose", "v", false, "Verbose output")
 	pflag.BoolVarP(&opt.version, "version", "V", false, "Prints the build information")
-
-	// attach mode
-	pflag.BoolVar(&opt.attachModeGeneric, xdp.XDPAttachModeStrGeneric, false, "Attach in SKB (AKA generic) mode")
-	pflag.BoolVar(&opt.attachModeNative, xdp.XDPAttachModeStrNative, false, "Attach in native mode")
-	pflag.BoolVar(&opt.attachModeOffload, xdp.XDPAttachModeStrOffload, false, "Attach in offload mode")
-
-	// bind flags
-	pflag.BoolVar(&opt.bindFlagsXSKCopy, xdp.XSKBindFlagsStrCopy, false, "Force copy mode")
-	pflag.BoolVar(&opt.bindFlagsXSKZeroCopy, xdp.XSKBindFlagsStrZeroCopy, false, "Force zero-copy mode")
-	pflag.BoolVar(&opt.bindFlagsNoNeedWakeup, "no-need-wakeup", false, "Disable need wakeup flag")
+	pflag.StringVarP(&opt.config, "config", "c", "/etc/xdpass/xdpassd.toml", "Config file path")
+	pflag.StringVar(&opt.dumpConfig, "dump-config", "", "Dump default config [generic|native]")
 	pflag.Parse()
 
 	if opt.version {
 		fmt.Println(builder.BuildInfo())
+		return
+	}
+
+	if opt.dumpConfig != "" {
+		if err := dumpConfig(opt.dumpConfig); err != nil {
+			logrus.WithField("err", err).Fatal("Fail to dump config")
+		}
 		return
 	}
 
@@ -88,45 +68,54 @@ func main() {
 	defer server.Close()
 	go server.Serve(ctx)
 
-	attachMode := xdp.XDPAttachModeGeneric
-	if opt.attachModeNative {
-		attachMode = xdp.XDPAttachModeNative
-	} else if opt.attachModeOffload {
-		attachMode = xdp.XDPAttachModeOffload
+	cfg, err := config.NewConfig(opt.config)
+	if err != nil {
+		logrus.WithField("err", err).Fatal("Fail to load config")
 	}
 
-	xdpOpts := []xdp.XDPOpt{}
-	if opt.bindFlagsXSKCopy {
-		xdpOpts = append(xdpOpts, xdp.WithCopy())
-	} else if opt.bindFlagsXSKZeroCopy {
-		xdpOpts = append(xdpOpts, xdp.WithZeroCopy())
-	}
-	if opt.bindFlagsNoNeedWakeup {
-		xdpOpts = append(xdpOpts, xdp.WithNoNeedWakeup())
-	}
-	opts := []internal.LinkHandleOpt{
-		internal.WithLinkQueueID(opt.queueID),
-		internal.WithLinkXDPFlags(attachMode, xdpOpts...),
-		internal.WithLinkHandleTimeout(opt.pollTimeout),
-		internal.WithLinkHandleCores(opt.cores),
+	links := make([]*internal.LinkHandle, len(cfg.Interfaces))
+	for i, iface := range cfg.Interfaces {
+		opts := []internal.LinkHandleOpt{
+			internal.WithLinkHandleCores(cfg.Cores),
+			internal.WithLinkQueueID(iface.QueueID),
+			internal.WithLinkXDPFlags(iface.AttachMode, iface.XDPOpts...),
+			internal.WithLinkHandleTimeout(cfg.PollTimeoutMs),
+		}
+		link, err := internal.NewLinkHandle(iface.Name, opts...)
+		if err != nil {
+			logrus.WithField("err", err).Fatal("Fail to new link handle")
+		}
+		links[i] = link
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(len(opt.ifaces))
-	for _, iface := range opt.ifaces {
-		go func(iface string) {
+	wg.Add(len(links))
+	for _, link := range links {
+		go func(link *internal.LinkHandle) {
 			defer wg.Done()
-			newLinkHandle(ctx, iface, opts...)
-		}(iface)
+			defer link.Close()
+			if err := link.Run(ctx); err != nil {
+				logrus.WithField("err", err).Fatal("Fail to run link handle")
+			}
+		}(link)
 	}
 	wg.Wait()
 }
 
-func newLinkHandle(ctx context.Context, iface string, opts ...internal.LinkHandleOpt) error {
-	link, err := internal.NewLinkHandle(iface, opts...)
+func dumpConfig(dumpType string) error {
+	var data []byte
+	var err error
+	switch dumpType {
+	case "generic":
+		data, err = toml.Marshal(config.DefaultConfigGeneric())
+	case "native":
+		data, err = toml.Marshal(config.DefaultConfigOffload())
+	default:
+		return fmt.Errorf("invalid dump type: %s", dumpType)
+	}
 	if err != nil {
 		return err
 	}
-	defer link.Close()
-	return link.Run(ctx)
+	fmt.Println(string(data))
+	return nil
 }

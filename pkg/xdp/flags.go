@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/BurntSushi/toml"
 	"golang.org/x/sys/unix"
 )
 
@@ -60,6 +61,21 @@ func (m *XDPAttachMode) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	return m.Set(s)
+}
+
+func (m XDPAttachMode) MarshalTOML() ([]byte, error) {
+	return toml.Marshal(m.String())
+}
+
+func (m *XDPAttachMode) UnmarshalTOML(data any) error {
+	switch v := data.(type) {
+	case string:
+		return m.Set(v)
+	case []byte:
+		return m.Set(string(v))
+	default:
+		return fmt.Errorf("invalid type: %T", v)
+	}
 }
 
 type XSKBindFlags uint16

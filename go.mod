@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.4.0
 	github.com/cilium/ebpf v0.17.1
 	github.com/google/gopacket v1.1.19
 	github.com/kentik/patricia v1.2.1

@@ -43,8 +43,8 @@ func WithLinkXDPFlags(attachMode xdp.XDPAttachMode, opts ...xdp.XDPOpt) LinkHand
 	}
 }
 
-func WithLinkHandleTimeout(timeout int) LinkHandleOpt {
-	return func(o *linkHandleOpts) { o.pollTimeout = timeout }
+func WithLinkHandleTimeout(timeoutMs int) LinkHandleOpt {
+	return func(o *linkHandleOpts) { o.pollTimeout = timeoutMs }
 }
 
 func WithLinkHandleCores(cores []int) LinkHandleOpt {
@@ -105,9 +105,14 @@ func NewLinkHandle(name string, opts ...LinkHandleOpt) (*LinkHandle, error) {
 	}
 
 	// Generate xdp socket per queue
-	queues, err := netutil.GetRxQueues(name)
-	if err != nil {
-		return nil, err
+	var queues []int
+	if o.queueID == -1 {
+		queues, err = netutil.GetRxQueues(name)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		queues = []int{o.queueID}
 	}
 	l.WithField("queues", queues).Info("Get rx queues")
 
@@ -179,8 +184,12 @@ func (x *LinkHandle) Run(ctx context.Context) error {
 		done = true
 	}()
 
-	var xskGroups []*xskGroup
 	cores := x.cores[:min(len(x.xsks), len(x.cores))]
+	if len(cores) == 0 {
+		cores = []int{-1}
+	}
+
+	var xskGroups []*xskGroup
 	for _, core := range cores {
 		xskGroups = append(xskGroups, &xskGroup{core: core})
 	}
